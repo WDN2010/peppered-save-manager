@@ -7,6 +7,7 @@ interface ActionModalProps {
   language: Language;
   title: string;
   description?: string;
+  error?: string;
   value: string;
   onValue: (value: string) => void;
   onCancel: () => void;
@@ -18,7 +19,7 @@ interface ActionModalProps {
   busy?: boolean;
 }
 
-export function ActionModal({ language, title, description, value, onValue, onCancel, onConfirm, confirmLabel, children, destructive, inputLabel, busy = false }: ActionModalProps) {
+export function ActionModal({ language, title, description, error, value, onValue, onCancel, onConfirm, confirmLabel, children, destructive, inputLabel, busy = false }: ActionModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -38,6 +39,7 @@ export function ActionModal({ language, title, description, value, onValue, onCa
         <div className="dialog-kicker">PEPPERED</div>
         <h2 id="dialog-heading">{title}</h2>
         {description && <p>{description}</p>}
+        {error && <p className="dialog-error" role="alert">{error}</p>}
         {inputLabel && <label className="dialog-label"><span>{inputLabel}</span><input ref={inputRef} value={value} onChange={(event) => onValue(event.target.value)} maxLength={160} required disabled={busy} /></label>}
         {children}
         <div className="dialog-actions">

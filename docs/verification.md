@@ -1,23 +1,23 @@
 # Verification receipt
 
-Verified on `2026-09-19T17:43:33+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-19T21:55:07+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
 - `npm test` — PASS: 4 test files, 29 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
-- `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true title=PEPPERED Save Manager lang=ru`.
-  - The smoke test builds the production bundles, launches Electron 44.4.1 with an isolated home and user-data directory under Xvfb, connects over CDP, verifies the sandboxed CommonJS preload exposed `window.peppered`, and waits for the real app shell.
+- `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true capture=true inlineError=true title=PEPPERED Save Manager lang=ru`.
+  - The smoke test builds the production bundles, launches Electron 44.4.1 with an isolated home and user-data directory under Xvfb, connects over CDP, verifies the sandboxed CommonJS preload, captures a real fixture through the prefilled dialog, and proves a rejected capture remains visible inside the open dialog.
 - `npm audit` — PASS: 0 vulnerabilities.
 - `npm run dist:win` — PASS: Windows x64 portable target built with Electron 44.4.1 and electron-builder 26.15.3.
 - `git diff --check` — PASS before commit.
 
 ## Artifact
 
-- Path: `release/PEPPERED-Save-Manager-1.0.0-portable.exe`
-- Size: `99,884,034` bytes
-- SHA-256: `f51787565e05b88a4622d322183a87dae43b4d0b9187c8af6ce33a5d989e7611`
+- Path: `release/PEPPERED-Save-Manager-1.0.1-portable.exe`
+- Size: `99,883,649` bytes
+- SHA-256: `a538cd5e65b9a858f119a1a610567e2f4009961391efb9beee0b0d31b940871b`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
 - Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
@@ -34,6 +34,7 @@ Regression tests cover:
 - actual `__type` / `value` wrappers and corrected PEPPERED field types;
 - concurrent same-byte capture deduplication, symlink-source rejection, and stable-source reads;
 - stable recovery reads, distinct automatic recovery snapshots, and explicit absent/identical/different prior-state results;
+- prefilled human-readable capture titles, enabled first-click capture, and inline modal errors for failed actions;
 - changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
 - symlink target and parent rejection;
 - corrupt local metadata quarantine;
@@ -50,7 +51,9 @@ Screenshots were inspected for:
 - Russian empty state at 1120×720 / 100%;
 - 130% scale at 1120×720;
 - responsive 860×560 minimum window at 130% with a single page scroll and no nested detail scrollbar;
-- populated checkpoint detail view with the name `A_7 — перед лифтом`.
+- populated checkpoint detail view with the name `A_7 — перед лифтом`;
+- capture dialog with the generated `A_7 — Elevator area` title and enabled confirmation;
+- capture rejection displayed as a readable inline alert without clipping actions.
 
 The final layouts kept all controls reachable, switched to a vertically scrollable single-column layout at minimum width, preserved visible focus/selection hierarchy, and showed localized labels and human-readable checkpoint data. Primary button fill was darkened after contrast calculation so normal-size near-white text exceeds the 4.5:1 target.
 

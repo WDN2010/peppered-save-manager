@@ -26,6 +26,7 @@ If the file is not found, use **Choose save path**. The override is persisted in
 ### Safety model
 
 - Capture rejects symlinked or changing source files, validates UTF-8 JSON and the supported PEPPERED Easy Save 3 shape, then copies the stable original bytes exactly.
+- The capture dialog starts with a human-readable title from the detected scene, so **Capture checkpoint** works immediately; capture, restore, rename, and delete failures stay visible inside the open dialog.
 - Each snapshot stores a SHA-256 digest, capture time, source path, title, and a small parsed summary.
 - Restore verifies the snapshot hash, refuses an invalid target, and refuses to proceed when the Windows process check cannot establish that PEPPERED is closed.
 - Before replacement, a different current save always becomes a distinct automatic **Recovery copy** in the catalog, even when the same bytes also exist as a manual snapshot. Recovery labels are localized in the UI; renaming one makes it manual.
@@ -83,6 +84,7 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 ### Безопасность
 
 - При копировании отклоняются симлинки и изменяющийся во время чтения источник, затем проверяются UTF-8 JSON и поддерживаемая структура Easy Save 3, а стабильные исходные байты копируются без изменений.
+- Диалог копирования сразу подставляет понятное название из распознанной сцены, поэтому **Сохранить точку** работает без обязательного ручного ввода; ошибки копирования, восстановления, переименования и удаления показываются внутри открытого диалога.
 - Для каждой точки хранятся SHA-256, время, путь источника, название и краткое описание состояния.
 - Перед восстановлением проверяется хеш точки и корректность цели. На Windows действие закрывается, если нельзя подтвердить, что PEPPERED завершён.
 - Отличающееся текущее сохранение всегда попадает в отдельную автоматическую **копию для восстановления**, даже если такие байты уже есть в обычной точке. Название копии локализуется в интерфейсе; переименование делает её обычной точкой.

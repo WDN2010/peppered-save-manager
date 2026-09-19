@@ -1,6 +1,6 @@
 {
   "name": "peppered-save-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A safe bilingual checkpoint manager for PEPPERED save files.",
   "main": "out/main/index.js",
   "author": "PEPPERED Save Manager contributors",
