@@ -317,8 +317,9 @@ export class CatalogRepository {
       await this.validateTarget(targetPath);
       const selected = await this.getSnapshot(id);
       let current: Buffer | null = null;
-      try { current = await readFile(targetPath); }
+      try { current = await readStableCaptureSource(targetPath); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const previousState: RestoreResult['previousState'] = current === null ? 'absent' : current.equals(selected.bytes) ? 'identical' : 'different';
       let safetySnapshotId: string | null = null;
       const capturedAt = now.toISOString();
       if (current && !current.equals(selected.bytes)) {
@@ -329,7 +330,7 @@ export class CatalogRepository {
         guardedTargetSha256: current ? hashBytes(current) : null,
         expectedReplacementSha256: selected.meta.sha256,
       });
-      return { restored: true, safetySnapshotId };
+      return { restored: true, safetySnapshotId, previousState };
     });
   }
 

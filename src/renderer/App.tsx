@@ -17,12 +17,14 @@ type ModalState =
 
 type StatusState = { key: CopyKey; vars?: Record<string, string | number> };
 
-function friendlyErrorKey(error: unknown): CopyKey {
+function friendlyErrorStatus(error: unknown): StatusState {
   const message = error instanceof Error ? error.message : '';
-  if (/Close PEPPERED|закройте PEPPERED|changed while restore|guarded replacement failed/i.test(message)) return 'closeGame';
-  if (/not found|не найдено/i.test(message)) return 'notFound';
-  if (/path|путь|Save\.es3/i.test(message)) return 'setPathFirst';
-  return 'actionFailed';
+  const temporaryPath = message.match(/Temporary recovery file preserved at (.+)$/i)?.[1]?.trim();
+  if (temporaryPath) return { key: /changed while restore/i.test(message) ? 'restoreChangedWithTemp' : 'restoreFailedWithTemp', vars: { path: temporaryPath } };
+  if (/Close PEPPERED|закройте PEPPERED|Could not verify|changed while restore|guarded replacement failed/i.test(message)) return { key: 'closeGame' };
+  if (/not found|не найдено/i.test(message)) return { key: 'notFound' };
+  if (/path|путь|Save\.es3/i.test(message)) return { key: 'setPathFirst' };
+  return { key: 'actionFailed' };
 }
 
 export default function App() {
@@ -73,7 +75,7 @@ export default function App() {
       await operation();
       if (token === operationRef.current && success) setStatus(success);
     } catch (error) {
-      if (token === operationRef.current) setStatus({ key: friendlyErrorKey(error) });
+      if (token === operationRef.current) setStatus(friendlyErrorStatus(error));
     } finally {
       if (token === operationRef.current) setBusy(false);
     }
@@ -119,7 +121,7 @@ export default function App() {
       const result = await window.peppered.restore(modal.id);
       setState(result.state);
       setModal(null);
-      setStatus({ key: result.safetySnapshotId ? 'restoredStatus' : 'restoredNoBackupStatus' });
+      setStatus({ key: result.safetySnapshotId ? 'restoredStatus' : result.previousState === 'absent' ? 'restoredCreatedStatus' : 'restoredNoBackupStatus' });
     }
   });
 

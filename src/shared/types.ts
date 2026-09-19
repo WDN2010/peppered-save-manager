@@ -70,6 +70,7 @@ export type CaptureResult =
 export interface RestoreResult {
   restored: true;
   safetySnapshotId: string | null;
+  previousState: 'different' | 'identical' | 'absent';
 }
 
 export interface ImportReport {

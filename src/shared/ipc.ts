@@ -24,6 +24,7 @@ export interface CaptureResponse {
 export interface RestoreResponse {
   state: AppState;
   safetySnapshotId: string | null;
+  previousState: 'different' | 'identical' | 'absent';
 }
 
 export interface RestoreAndLaunchResponse extends RestoreResponse {

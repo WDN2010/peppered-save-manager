@@ -170,7 +170,7 @@ export function registerIpc(catalog: CatalogRepository): void {
     if (await gameIsRunning()) throw new Error('Close PEPPERED before restoring a checkpoint.');
     const settings = await getSettings();
     const result = await catalog.restore(id, resolveActivePath(settings));
-    return { state: await getState(), safetySnapshotId: result.safetySnapshotId };
+    return { state: await getState(), safetySnapshotId: result.safetySnapshotId, previousState: result.previousState };
   };
   ipcMain.handle('app:restore', async (event, input: unknown): Promise<RestoreResponse> => {
     assertTrustedSender(event);

@@ -136,8 +136,8 @@ public static class PepperedGuardedReplace
     {
         string target = Path.GetFullPath(targetPath);
         string temporary = Path.GetFullPath(temporaryPath);
-        string targetParent = Path.GetDirectoryName(target).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string temporaryParent = Path.GetDirectoryName(temporary).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string targetParent = Path.GetDirectoryName(target);
+        string temporaryParent = Path.GetDirectoryName(temporary);
         if (!String.Equals(targetParent, temporaryParent, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("CROSS_DIRECTORY_REPLACE_REJECTED");
 

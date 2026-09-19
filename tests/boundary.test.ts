@@ -29,6 +29,11 @@ describe('Electron and renderer release boundaries', () => {
     expect(main).toContain("ipcMain.handle('app:restore-and-launch'");
     const preload = await read('src/preload/index.ts');
     expect(preload).toContain("ipcRenderer.invoke('app:restore-and-launch'");
+    const catalog = await read('src/core/catalog.ts');
+    expect(catalog).toContain('current = await readStableCaptureSource(targetPath)');
+    const app = await read('src/renderer/App.tsx');
+    expect(app).toContain('restoreFailedWithTemp');
+    expect(app).toContain("result.previousState === 'absent'");
   });
 
   it('uses a strict CSP, localized document language, scale-aware text, and semantic list buttons', async () => {
@@ -60,6 +65,8 @@ describe('Electron and renderer release boundaries', () => {
     const helper = await read('resources/replace-save.ps1');
     expect(helper).toContain('LockFileEx');
     expect(helper).toContain('ReplaceFileW');
+    expect(helper).toContain('MoveFileExW');
     expect(helper).toContain('TARGET_CHANGED');
+    expect(helper).not.toContain('GetDirectoryName(target).TrimEnd');
   });
 });

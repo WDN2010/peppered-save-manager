@@ -92,12 +92,25 @@ describe('catalog capture and restore safety', () => {
 
     const result = await catalog.restore(captured.snapshot.id, target);
     expect(result.restored).toBe(true);
+    expect(result.previousState).toBe('different');
     expect(result.safetySnapshotId).toBeTruthy();
     expect(await readFile(target)).toEqual(await readFile(fixturePath));
     const safety = await catalog.getSnapshot(result.safetySnapshotId!);
     expect(safety.meta.kind).toBe('recovery');
     const noNewRecovery = await catalog.restore(captured.snapshot.id, target);
     expect(noNewRecovery.safetySnapshotId).toBeNull();
+    expect(noNewRecovery.previousState).toBe('identical');
+  });
+
+  it('distinguishes restoring into an absent target from an identical save', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    const captured = await catalog.capture({ sourcePath: fixturePath, title: 'Create target' });
+    expect(captured.kind).toBe('created');
+    if (captured.kind !== 'created') return;
+    const result = await catalog.restore(captured.snapshot.id, target);
+    expect(result).toMatchObject({ restored: true, safetySnapshotId: null, previousState: 'absent' });
+    expect(await readFile(target)).toEqual(await readFile(fixturePath));
   });
 
   it('preserves the original and reports a recovery temp when replacement fails', async () => {
