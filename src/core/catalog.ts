@@ -51,7 +51,40 @@ async function assertDirectory(value: string, label: string): Promise<void> {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`${label} must be a real directory`);
 }
 
-async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
+function saveReadErrorCode(error: unknown): string {
+  return error && typeof error === 'object' && 'code' in error ? String((error as NodeJS.ErrnoException).code ?? '') : '';
+}
+
+function isTransientSaveReadError(error: unknown): boolean {
+  const code = saveReadErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return ['EBUSY', 'EACCES', 'EPERM', 'ETXTBSY'].includes(code)
+    || /capture source changed while|resource busy|sharing violation/i.test(message);
+}
+
+export async function retryTransientSaveRead<T>(
+  operation: () => Promise<T>,
+  options: { attempts?: number; wait?: (milliseconds: number) => Promise<void> } = {},
+): Promise<T> {
+  const attempts = Math.max(1, Math.min(options.attempts ?? 6, 8));
+  const wait = options.wait ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await operation(); }
+    catch (error) {
+      if (!isTransientSaveReadError(error)) throw error;
+      if (attempt + 1 >= attempts) {
+        const busy = new Error('Save.es3 is busy or changing. Wait for PEPPERED to finish saving and try again.') as NodeJS.ErrnoException;
+        busy.code = 'EBUSY';
+        busy.cause = error;
+        throw busy;
+      }
+      await wait(40 * (2 ** attempt));
+    }
+  }
+  throw new Error('Unreachable save-read retry state');
+}
+
+async function readStableCaptureAttempt(sourcePath: string): Promise<Buffer> {
   const absoluteSource = path.resolve(sourcePath);
   const parent = path.dirname(absoluteSource);
   const parentInfo = await lstat(parent);
@@ -74,6 +107,10 @@ async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
   } finally {
     await handle.close();
   }
+}
+
+async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
+  return retryTransientSaveRead(() => readStableCaptureAttempt(sourcePath));
 }
 
 export class CatalogRepository {

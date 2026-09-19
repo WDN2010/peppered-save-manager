@@ -22,6 +22,7 @@ function friendlyErrorStatus(error: unknown): StatusState {
   const temporaryPath = message.match(/Temporary recovery file preserved at (.+)$/i)?.[1]?.trim();
   if (temporaryPath) return { key: /changed while restore/i.test(message) ? 'restoreChangedWithTemp' : 'restoreFailedWithTemp', vars: { path: temporaryPath } };
   if (/Close PEPPERED|закройте PEPPERED|Could not verify|changed while restore|guarded replacement failed/i.test(message)) return { key: 'closeGame' };
+  if (/Save\.es3 is busy or changing|EBUSY|resource busy|sharing violation/i.test(message)) return { key: 'saveBusy' };
   if (/capture source changed|changed while it was being read/i.test(message)) return { key: 'saveChangedDuringCapture' };
   if (/not a supported PEPPERED Easy Save 3 document/i.test(message)) return { key: 'unsupportedSave' };
   if (/Save is empty|not valid JSON|not valid UTF-8/i.test(message)) return { key: 'invalidSave' };

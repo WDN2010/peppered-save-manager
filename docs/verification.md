@@ -1,10 +1,10 @@
 # Verification receipt
 
-Verified on `2026-09-19T21:55:07+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-19T22:34:47+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
-- `npm test` — PASS: 4 test files, 29 tests.
+- `npm test` — PASS: 4 test files, 31 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
 - `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true capture=true inlineError=true title=PEPPERED Save Manager lang=ru`.
@@ -15,9 +15,9 @@ Verified on `2026-09-19T21:55:07+03:00` from `/home/wdn2010/peppered-save-manage
 
 ## Artifact
 
-- Path: `release/PEPPERED-Save-Manager-1.0.1-portable.exe`
-- Size: `99,883,649` bytes
-- SHA-256: `a538cd5e65b9a858f119a1a610567e2f4009961391efb9beee0b0d31b940871b`
+- Path: `release/PEPPERED-Save-Manager-1.0.2-portable.exe`
+- Size: `99,882,473` bytes
+- SHA-256: `798080dc01fea2ae849ba145f1b69cefe45494b95a8a67020515221b42262802`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
 - Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
@@ -33,6 +33,7 @@ Regression tests cover:
 - fatal invalid UTF-8 rejection and meaningful PEPPERED ES3 shape validation;
 - actual `__type` / `value` wrappers and corrected PEPPERED field types;
 - concurrent same-byte capture deduplication, symlink-source rejection, and stable-source reads;
+- bounded retry of transient Windows `EBUSY`/sharing-lock failures and a stable busy-file error after exhaustion;
 - stable recovery reads, distinct automatic recovery snapshots, and explicit absent/identical/different prior-state results;
 - prefilled human-readable capture titles, enabled first-click capture, and inline modal errors for failed actions;
 - changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
@@ -42,7 +43,7 @@ Regression tests cover:
 - serialized settings repair versus concurrent updates;
 - sandbox-compatible preload output, CSP/navigation/IPC boundaries, the fixed Steam launch bridge, localized preserved-temporary-file failures, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
 
-The C# source embedded in the PowerShell helper was extracted and compiled successfully with Mono `mcs`. The compiled helper was then executed through Wine Mono against the current Win32 calls: existing-target replacement and absent-target creation passed; a changed target and a concurrently held writable handle both failed closed while preserving target and temporary bytes. `scripts/windows-replace-smoke.ps1` provides the equivalent native-Windows gate.
+The C# source embedded in the PowerShell helper was extracted and compiled successfully with Mono `mcs`. The compiled helper was then executed through Wine Mono against the current Win32 calls: existing-target replacement and absent-target creation passed; a changed target and a concurrently held writable handle both failed closed while preserving target and temporary bytes. A focused Windows-Node probe through the packaged Electron runtime also held `Save.es3` with an exclusive handle: a 350 ms lock was retried and captured successfully, while a persistent lock returned the stable user-facing `EBUSY` contract without writing a snapshot. `scripts/windows-replace-smoke.ps1` provides the equivalent native-Windows restore gate.
 
 ## Visual QA
 

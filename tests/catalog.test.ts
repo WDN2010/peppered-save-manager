@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { replaceAtomically } from '../src/core/atomic';
-import { CatalogRepository } from '../src/core/catalog';
+import { CatalogRepository, retryTransientSaveRead } from '../src/core/catalog';
 import type { Settings, SnapshotFile } from '../src/shared/types';
 
 const fixturePath = path.resolve('tests/fixtures/sample-save.es3');
@@ -18,6 +18,37 @@ async function makeCatalog() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-catalog-'));
   return { root, catalog: new CatalogRepository(root) };
 }
+
+describe('save read retries', () => {
+  it('retries a transient Windows sharing violation and then succeeds', async () => {
+    let calls = 0;
+    const waits: number[] = [];
+    const result = await retryTransientSaveRead(async () => {
+      calls += 1;
+      if (calls < 3) {
+        const error = new Error('resource busy or locked') as NodeJS.ErrnoException;
+        error.code = 'EBUSY';
+        throw error;
+      }
+      return 'captured';
+    }, { wait: async (milliseconds) => { waits.push(milliseconds); } });
+    expect(result).toBe('captured');
+    expect(calls).toBe(3);
+    expect(waits).toEqual([40, 80]);
+  });
+
+  it('returns a stable user-facing busy error after bounded retries', async () => {
+    let calls = 0;
+    const run = retryTransientSaveRead(async () => {
+      calls += 1;
+      const error = new Error('EPERM: operation not permitted') as NodeJS.ErrnoException;
+      error.code = 'EPERM';
+      throw error;
+    }, { attempts: 3, wait: async () => undefined });
+    await expect(run).rejects.toMatchObject({ code: 'EBUSY', message: expect.stringMatching(/busy or changing/i) });
+    expect(calls).toBe(3);
+  });
+});
 
 describe('catalog capture and restore safety', () => {
   it('captures exact bytes, stores metadata, and deduplicates content', async () => {
