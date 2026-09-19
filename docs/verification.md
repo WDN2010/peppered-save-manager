@@ -1,10 +1,10 @@
 # Verification receipt
 
-Verified on `2026-09-19T15:01:37+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-19T15:35:39+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
-- `npm test` — PASS: 4 test files, 23 tests.
+- `npm test` — PASS: 4 test files, 25 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
 - `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true title=PEPPERED Save Manager lang=ru`.
@@ -16,15 +16,15 @@ Verified on `2026-09-19T15:01:37+03:00` from `/home/wdn2010/peppered-save-manage
 ## Artifact
 
 - Path: `release/PEPPERED-Save-Manager-1.0.0-portable.exe`
-- Size: `99,875,152` bytes
-- SHA-256: `dafaa861c388641e98dbcd537483a8490e72d4072157fe23bf1190dd657ba767`
+- Size: `99,880,933` bytes
+- SHA-256: `0bafc629df7145eb2febe743bfe1bcc07bd6fc8026e96d6db6de34a27a8795bd`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
-- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`.
+- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d7af8721353c026f341bb9eb9737ad9732d7a2604c56641b33d8dd3848b32660`.
 
 ## Restore replacement primitive
 
-Restore writes a uniquely named sibling temporary file with exclusive creation, writes the complete selected save bytes, calls `fsync`, closes the handle, and revalidates the target directory and file identity. It then performs exactly one same-directory `fs.rename(temp, Save.es3)` operation. Node/libuv maps the Windows implementation to `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`; the live file is never renamed away first, so failed replacement attempts leave it in place. Transient `EPERM`, `EACCES`, and `EBUSY` errors use bounded exponential retry. If replacement still fails, the complete temporary recovery file is preserved and its path is surfaced.
+Restore writes a uniquely named sibling temporary file with exclusive creation, writes the complete selected save bytes, calls `fsync`, closes the handle, and revalidates the target directory and file identity. On Windows, the packaged `helpers/replace-save.ps1` compiles a small C# guard that opens the parent without delete sharing, opens and locks the active save and replacement against writes, verifies the exact recovery-time and replacement SHA-256 values under those locks, and then performs one `ReplaceFileW` commit. A writable peer handle, changed bytes, or an unexpectedly appeared target fails closed. The live file is never renamed away first. Sharing violations use bounded exponential retry; if replacement still fails, the complete temporary recovery file is preserved and its path is surfaced.
 
 ## Import/export and parser probes
 
@@ -32,13 +32,15 @@ Regression tests cover:
 
 - fatal invalid UTF-8 rejection and meaningful PEPPERED ES3 shape validation;
 - actual `__type` / `value` wrappers and corrected PEPPERED field types;
-- concurrent same-byte capture deduplication;
+- concurrent same-byte capture deduplication, symlink-source rejection, and stable-source reads;
 - distinct automatic recovery snapshots;
-- failed replacement preserving the original save and temporary evidence;
+- changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
 - symlink target and parent rejection;
 - corrupt local metadata quarantine;
 - path traversal, uppercase UUID/hash canonicalization, pre-decompression total-size rejection, mixed valid/invalid all-or-nothing import, and rollback after injected commit failure;
 - sandbox-compatible preload output, CSP/navigation/IPC boundaries, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
+
+The C# source embedded in the PowerShell helper was also extracted and compiled successfully with Mono `mcs` as a syntax/type probe. Native Win32 calls themselves remain part of the native-Windows runtime gate below.
 
 ## Visual QA
 

@@ -19,7 +19,7 @@ type StatusState = { key: CopyKey; vars?: Record<string, string | number> };
 
 function friendlyErrorKey(error: unknown): CopyKey {
   const message = error instanceof Error ? error.message : '';
-  if (/Close PEPPERED|закройте PEPPERED/i.test(message)) return 'closeGame';
+  if (/Close PEPPERED|закройте PEPPERED|changed while restore|guarded replacement failed/i.test(message)) return 'closeGame';
   if (/not found|не найдено/i.test(message)) return 'notFound';
   if (/path|путь|Save\.es3/i.test(message)) return 'setPathFirst';
   return 'actionFailed';

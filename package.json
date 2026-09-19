@@ -51,6 +51,12 @@
       "build/icon.ico",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/replace-save.ps1",
+        "to": "helpers/replace-save.ps1"
+      }
+    ],
     "directories": {
       "output": "release"
     },

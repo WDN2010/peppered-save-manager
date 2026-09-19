@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rename, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +9,10 @@ import type { SnapshotFile } from '../src/shared/types';
 
 const fixturePath = path.resolve('tests/fixtures/sample-save.es3');
 const fixtureBPath = path.resolve('tests/fixtures/sample-save-b.es3');
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 async function makeCatalog() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-catalog-'));
@@ -115,6 +120,45 @@ describe('catalog capture and restore safety', () => {
     await expect(stat(evidence!)).resolves.toBeDefined();
   });
 
+  it('rejects content changed since recovery capture before replacement', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-concurrent-'));
+    const target = path.join(root, 'Save.es3');
+    const original = Buffer.from('original');
+    const newer = Buffer.from('newer peer write');
+    const replacement = Buffer.from('selected snapshot');
+    await writeFile(target, original);
+    await writeFile(target, newer);
+    await expect(replaceAtomically(target, replacement, {
+      guardedTargetSha256: sha256(original),
+      expectedReplacementSha256: sha256(replacement),
+    })).rejects.toThrow(/changed while restore was being prepared/i);
+    expect(await readFile(target)).toEqual(newer);
+  });
+
+  it('passes exact expected hashes to the Windows guarded replacement helper', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-win-guard-'));
+    const target = path.join(root, 'Save.es3');
+    const original = Buffer.from('original');
+    const replacement = Buffer.from('selected snapshot');
+    await writeFile(target, original);
+    let called = false;
+    await replaceAtomically(target, replacement, {
+      platform: 'win32',
+      guardedTargetSha256: sha256(original),
+      expectedReplacementSha256: sha256(replacement),
+      windowsGuardedReplace: async (actualTarget, temporary, expectedTarget, expectedReplacement) => {
+        called = true;
+        expect(actualTarget).toBe(target);
+        expect(expectedTarget).toBe(sha256(original));
+        expect(expectedReplacement).toBe(sha256(replacement));
+        expect(await readFile(temporary)).toEqual(replacement);
+        await rename(temporary, actualTarget);
+      },
+    });
+    expect(called).toBe(true);
+    expect(await readFile(target)).toEqual(replacement);
+  });
+
   it('rejects symlink targets and symlink parents before replacement', async () => {
     const { root, catalog } = await makeCatalog();
     const realDirectory = path.join(root, 'real');
@@ -128,6 +172,7 @@ describe('catalog capture and restore safety', () => {
     const target = path.join(root, 'Save.es3');
     await symlink(realTarget, target);
     await expect(replaceAtomically(target, Buffer.from('replacement'))).rejects.toThrow(/regular file|symlink/i);
+    await expect(catalog.capture({ sourcePath: target, title: 'Symlink source' })).rejects.toThrow(/regular file|symlink/i);
   });
 
   it('skips corrupt local metadata and normalizes invalid persisted save paths', async () => {

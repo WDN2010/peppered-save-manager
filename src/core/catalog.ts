@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile, replaceAtomically } from './atomic';
 import { parseSaveBytes, MAX_SAVE_BYTES } from './es3';
 import { validateSettings, validateSnapshotMeta, DEFAULT_SETTINGS } from './metadata';
 import { exportCatalog, importCatalog } from './archive';
-import { isIsoDate, isValidSaveTarget, isValidSnapshotId, sameFilesystemPath } from './validation';
+import { isIsoDate, isValidSaveTarget, isValidSnapshotId, isValidSourcePath, sameFilesystemPath } from './validation';
 import type {
   CaptureInput,
   CaptureResult,
@@ -49,6 +49,31 @@ async function pathExists(value: string): Promise<boolean> {
 async function assertDirectory(value: string, label: string): Promise<void> {
   const info = await lstat(value);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`${label} must be a real directory`);
+}
+
+async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
+  const absoluteSource = path.resolve(sourcePath);
+  const parent = path.dirname(absoluteSource);
+  const parentInfo = await lstat(parent);
+  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('The save folder must be a real directory');
+  if (!sameFilesystemPath(await realpath(parent), parent)) throw new Error('The save folder must not resolve through a symlink');
+  const before = await lstat(absoluteSource, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink()) throw new Error('The capture source must be a regular file, not a symlink');
+  if (before.size > BigInt(MAX_SAVE_BYTES)) throw new Error('Save exceeds the safety limit');
+  const handle = await open(absoluteSource, 'r');
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('The capture source changed while opening');
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeNs !== opened.mtimeNs || after.ctimeNs !== opened.ctimeNs) {
+      throw new Error('The capture source changed while it was being read');
+    }
+    if (bytes.length > MAX_SAVE_BYTES) throw new Error('Save exceeds the safety limit');
+    return bytes;
+  } finally {
+    await handle.close();
+  }
 }
 
 export class CatalogRepository {
@@ -233,14 +258,11 @@ export class CatalogRepository {
   }
 
   async capture(input: CaptureInput): Promise<CaptureResult> {
-    if (!input || typeof input.sourcePath !== 'string' || input.sourcePath.length === 0 || input.sourcePath.length > 4_000) throw new Error('Invalid save path');
+    if (!input || !isValidSourcePath(input.sourcePath)) throw new Error('Invalid save path');
     const capturedAt = input.capturedAt ?? new Date().toISOString();
     if (!isIsoDate(capturedAt)) throw new Error('Invalid capture time');
     return this.mutations.run(async () => {
-      const sourceInfo = await stat(input.sourcePath);
-      if (!sourceInfo.isFile() || sourceInfo.size > MAX_SAVE_BYTES) throw new Error('Save exceeds the safety limit');
-      const bytes = await readFile(input.sourcePath);
-      if (bytes.length > MAX_SAVE_BYTES) throw new Error('Save exceeds the safety limit');
+      const bytes = await readStableCaptureSource(input.sourcePath);
       return this.captureBytes(bytes, input.sourcePath, input.title, capturedAt);
     });
   }
@@ -291,7 +313,10 @@ export class CatalogRepository {
         const safety = await this.captureBytes(current, targetPath, 'Recovery copy', capturedAt, 'recovery');
         safetySnapshotId = safety.snapshot.id;
       }
-      await replaceAtomically(targetPath, selected.bytes);
+      await replaceAtomically(targetPath, selected.bytes, {
+        guardedTargetSha256: current ? hashBytes(current) : null,
+        expectedReplacementSha256: selected.meta.sha256,
+      });
       return { restored: true, safetySnapshotId };
     });
   }

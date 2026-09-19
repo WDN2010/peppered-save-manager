@@ -1,11 +1,17 @@
-import { open, rename, rm, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { access, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { sameFilesystemPath } from './validation';
 
 export interface AtomicFileOptions {
   rename?: typeof rename;
 }
+
+type WindowsGuardedReplace = (target: string, temporary: string, expectedTargetSha256: string | null, expectedReplacementSha256: string) => Promise<void>;
+
+const execFileAsync = promisify(execFile);
 
 function errorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
@@ -17,6 +23,55 @@ function isTransientReplaceError(error: unknown): boolean {
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function resolveWindowsReplaceHelper(): Promise<string> {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    resourcesPath ? path.join(resourcesPath, 'helpers', 'replace-save.ps1') : null,
+    path.resolve(process.cwd(), 'resources', 'replace-save.ps1'),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch { /* Try the next packaged/development location. */ }
+  }
+  throw new Error('Windows guarded replacement helper is missing');
+}
+
+async function runWindowsGuardedReplace(
+  target: string,
+  temporary: string,
+  expectedTargetSha256: string | null,
+  expectedReplacementSha256: string,
+): Promise<void> {
+  const helper = await resolveWindowsReplaceHelper();
+  try {
+    await execFileAsync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', helper,
+      '-TargetPath', target,
+      '-TemporaryPath', temporary,
+      '-ExpectedTargetSha256', expectedTargetSha256 ?? 'ABSENT',
+      '-ExpectedReplacementSha256', expectedReplacementSha256,
+    ], { windowsHide: true, timeout: 20_000, maxBuffer: 256 * 1024 });
+  } catch (error) {
+    const detail = error instanceof Error && 'stderr' in error
+      ? String((error as Error & { stderr?: unknown }).stderr ?? error.message)
+      : String(error);
+    const concurrent = /TARGET_CHANGED|TARGET_APPEARED/i.test(detail);
+    const wrapped = new Error(concurrent
+      ? 'The active save changed while restore was being prepared; no replacement was made.'
+      : `Windows guarded replacement failed: ${detail}`) as NodeJS.ErrnoException;
+    if (/WIN32_(32|33)|sharing|FILE_LOCK_FAILED/i.test(detail)) wrapped.code = 'EBUSY';
+    else if (concurrent) wrapped.code = 'ECONCURRENT';
+    throw wrapped;
+  }
 }
 
 function withTempPath(error: unknown, temporary: string): Error {
@@ -62,6 +117,10 @@ export interface AtomicReplaceOptions extends AtomicFileOptions {
   lstat?: typeof import('node:fs/promises').lstat;
   realpath?: typeof import('node:fs/promises').realpath;
   retries?: number;
+  guardedTargetSha256?: string | null;
+  expectedReplacementSha256?: string;
+  platform?: NodeJS.Platform;
+  windowsGuardedReplace?: WindowsGuardedReplace;
 }
 
 async function assertStableReplacementPath(targetPath: string, options: AtomicReplaceOptions): Promise<{
@@ -96,10 +155,30 @@ async function assertReplacementIdentity(targetPath: string, expected: Awaited<R
   if (actual.targetIdentity && expected.targetIdentity && (actual.targetIdentity.dev !== expected.targetIdentity.dev || actual.targetIdentity.ino !== expected.targetIdentity.ino)) throw new Error('The active save changed while restoring');
 }
 
+async function assertGuardedContents(targetPath: string, temporary: string, expectedTargetSha256: string | null, expectedReplacementSha256: string): Promise<void> {
+  if (sha256(await readFile(temporary)) !== expectedReplacementSha256) throw new Error('Temporary replacement changed before commit');
+  try {
+    const currentSha256 = sha256(await readFile(targetPath));
+    if (expectedTargetSha256 === null || currentSha256 !== expectedTargetSha256) {
+      const error = new Error('The active save changed while restore was being prepared; no replacement was made.') as NodeJS.ErrnoException;
+      error.code = 'ECONCURRENT';
+      throw error;
+    }
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT' && expectedTargetSha256 === null) return;
+    throw error;
+  }
+}
+
 export async function replaceAtomically(targetPath: string, bytes: Buffer, options: AtomicReplaceOptions = {}): Promise<void> {
   const expected = await assertStableReplacementPath(targetPath, options);
   const temporary = path.join(expected.parent, `.peppered-tmp-${randomUUID()}`);
   const renameFile = options.rename ?? rename;
+  const windowsGuardedReplace = options.windowsGuardedReplace ?? runWindowsGuardedReplace;
+  const platform = options.platform ?? process.platform;
+  const guarded = Object.prototype.hasOwnProperty.call(options, 'guardedTargetSha256');
+  const replacementSha256 = options.expectedReplacementSha256 ?? sha256(bytes);
+  if (guarded && replacementSha256 !== sha256(bytes)) throw new Error('Replacement hash does not match the supplied bytes');
   const retries = Math.max(0, Math.min(options.retries ?? 4, 8));
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   let replacementStarted = false;
@@ -110,12 +189,17 @@ export async function replaceAtomically(targetPath: string, bytes: Buffer, optio
     await handle.sync();
     await handle.close();
     handle = null;
-    await assertReplacementIdentity(targetPath, expected, options);
     replacementStarted = true;
     let attempt = 0;
     while (true) {
       try {
-        await renameFile(temporary, targetPath);
+        await assertReplacementIdentity(targetPath, expected, options);
+        if (guarded && platform === 'win32') {
+          await windowsGuardedReplace(targetPath, temporary, options.guardedTargetSha256 ?? null, replacementSha256);
+        } else {
+          if (guarded) await assertGuardedContents(targetPath, temporary, options.guardedTargetSha256 ?? null, replacementSha256);
+          await renameFile(temporary, targetPath);
+        }
         break;
       } catch (error) {
         if (!isTransientReplaceError(error) || attempt >= retries) throw error;

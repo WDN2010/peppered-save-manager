@@ -42,12 +42,20 @@ describe('Electron and renderer release boundaries', () => {
     expect(list).not.toContain('role="listitem"');
   });
 
-  it('pins Electron and ships the original icon in the portable file set', async () => {
-    const packageJson = JSON.parse(await read('package.json')) as { devDependencies: Record<string, string>; build: { files: string[]; win: { icon: string } } };
+  it('pins Electron and ships the icon and guarded Windows replacement helper', async () => {
+    const packageJson = JSON.parse(await read('package.json')) as {
+      devDependencies: Record<string, string>;
+      build: { files: string[]; extraResources: Array<{ from: string; to: string }>; win: { icon: string } };
+    };
     expect(packageJson.devDependencies.electron).toBe('44.4.1');
     expect(packageJson.build.win.icon).toBe('build/icon.ico');
     expect(packageJson.build.files).toContain('build/icon.ico');
+    expect(packageJson.build.extraResources).toContainEqual({ from: 'resources/replace-save.ps1', to: 'helpers/replace-save.ps1' });
     const icon = await readFile(path.join(root, 'build/icon.ico'));
     expect(icon.subarray(0, 6)).toEqual(Buffer.from([0, 0, 1, 0, 4, 0]));
+    const helper = await read('resources/replace-save.ps1');
+    expect(helper).toContain('LockFileEx');
+    expect(helper).toContain('ReplaceFileW');
+    expect(helper).toContain('TARGET_CHANGED');
   });
 });
