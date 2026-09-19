@@ -1,23 +1,24 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
+import { atomicWriteFile } from './atomic';
 import { parseSaveBytes } from './es3';
+import { validateSnapshotMeta } from './metadata';
+import { canonicalSnapshotId, canonicalSha256, isIsoDate } from './validation';
 import type { ImportReport, Settings, SnapshotFile, SnapshotMeta } from '../shared/types';
 
-const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
-const MAX_ENTRIES = 1_000;
-const MAX_SAVE_BYTES = 16 * 1024 * 1024;
-const MAX_TOTAL_SAVE_BYTES = 48 * 1024 * 1024;
-const MAX_META_BYTES = 256 * 1024;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SHA256 = /^[0-9a-f]{64}$/i;
+export const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
+export const MAX_ENTRIES = 1_000;
+export const MAX_SAVE_BYTES = 16 * 1024 * 1024;
+export const MAX_TOTAL_SAVE_BYTES = 48 * 1024 * 1024;
+export const MAX_META_BYTES = 256 * 1024;
 
 export interface ArchiveCatalog {
   listSnapshots(): Promise<SnapshotMeta[]>;
   getSnapshot(id: string): Promise<SnapshotFile>;
   getSettings(): Promise<Settings>;
-  addImportedSnapshot(snapshot: SnapshotFile): Promise<void>;
+  commitImportedSnapshots(snapshots: SnapshotFile[], importedSettings?: Pick<Settings, 'language' | 'scale'>): Promise<void>;
 }
 
 export interface ArchiveManifestEntry {
@@ -46,8 +47,15 @@ export class ImportRejectedError extends Error {
   }
 }
 
+export class ImportLimitError extends ImportRejectedError {}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function decodeUtf8(bytes: Buffer, label: string): string {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new ImportRejectedError(`${label} is not valid UTF-8`); }
 }
 
 function assertSafeArchivePath(value: unknown, field: string): asserts value is string {
@@ -56,46 +64,30 @@ function assertSafeArchivePath(value: unknown, field: string): asserts value is 
   }
 }
 
-function validateMeta(meta: unknown, id: string): asserts meta is SnapshotMeta {
-  if (!isRecord(meta) || meta.version !== 1 || meta.id !== id || !UUID.test(id)) {
-    throw new ImportRejectedError('Snapshot metadata has an unsupported schema');
-  }
-  if (typeof meta.title !== 'string' || meta.title.trim().length === 0 || meta.title.length > 160) {
-    throw new ImportRejectedError('Snapshot metadata has an invalid title');
-  }
-  if (typeof meta.capturedAt !== 'string' || Number.isNaN(Date.parse(meta.capturedAt))) {
-    throw new ImportRejectedError('Snapshot metadata has an invalid capture time');
-  }
-  const summary = meta.summary;
-  const description = isRecord(summary) ? summary.description : null;
-  if (typeof meta.sourcePath !== 'string' || meta.sourcePath.length > 4_000 || typeof meta.sha256 !== 'string' || !SHA256.test(meta.sha256) || typeof meta.bytes !== 'number' || !Number.isSafeInteger(meta.bytes) || meta.bytes < 1 || !isRecord(summary) || !isRecord(description) || typeof description.en !== 'string' || typeof description.ru !== 'string') {
-    throw new ImportRejectedError('Snapshot metadata has invalid fields');
-  }
-}
-
-function validateManifest(manifest: unknown): asserts manifest is ArchiveManifest {
+function validateManifest(manifest: unknown): ArchiveManifest {
   if (!isRecord(manifest) || manifest.format !== 'peppered-saves' || manifest.version !== 1 || !Array.isArray(manifest.snapshots) || manifest.snapshots.length > MAX_ENTRIES) {
     throw new ImportRejectedError('Unsupported catalog archive manifest');
   }
-  if (typeof manifest.createdAt !== 'string' || Number.isNaN(Date.parse(manifest.createdAt))) {
-    throw new ImportRejectedError('Catalog archive has an invalid creation time');
-  }
-  if (manifest.settingsPath !== 'settings.json') throw new ImportRejectedError('Catalog archive has an invalid settings path');
+  if (!isIsoDate(manifest.createdAt) || manifest.settingsPath !== 'settings.json') throw new ImportRejectedError('Catalog archive manifest is invalid');
   const ids = new Set<string>();
-  for (const [index, entry] of manifest.snapshots.entries()) {
-    if (!isRecord(entry) || typeof entry.id !== 'string' || ids.has(entry.id) || !UUID.test(entry.id)) {
-      throw new ImportRejectedError(`Invalid or duplicate snapshot id at manifest entry ${index + 1}`);
-    }
-    ids.add(entry.id);
-    assertSafeArchivePath(entry.savePath, `snapshots[${index}].savePath`);
-    assertSafeArchivePath(entry.metaPath, `snapshots[${index}].metaPath`);
-    if (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256) || typeof entry.bytes !== 'number' || !Number.isSafeInteger(entry.bytes) || entry.bytes < 1 || entry.bytes > MAX_SAVE_BYTES) {
-      throw new ImportRejectedError(`Invalid size or hash at manifest entry ${index + 1}`);
-    }
-    if (entry.savePath !== `snapshots/${entry.id}/save.es3` || entry.metaPath !== `snapshots/${entry.id}/meta.json`) {
-      throw new ImportRejectedError(`Unexpected snapshot paths at manifest entry ${index + 1}`);
-    }
+  let totalSaveBytes = 0;
+  const snapshots: ArchiveManifestEntry[] = [];
+  for (const [index, rawEntry] of manifest.snapshots.entries()) {
+    if (!isRecord(rawEntry)) throw new ImportRejectedError(`Invalid snapshot manifest entry ${index + 1}`);
+    const id = canonicalSnapshotId(rawEntry.id);
+    const sha256 = canonicalSha256(rawEntry.sha256);
+    if (!id || ids.has(id)) throw new ImportRejectedError(`Invalid or duplicate snapshot id at manifest entry ${index + 1}`);
+    ids.add(id);
+    assertSafeArchivePath(rawEntry.savePath, `snapshots[${index}].savePath`);
+    assertSafeArchivePath(rawEntry.metaPath, `snapshots[${index}].metaPath`);
+    const bytes = rawEntry.bytes;
+    if (!sha256 || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > MAX_SAVE_BYTES) throw new ImportRejectedError(`Invalid size or hash at manifest entry ${index + 1}`);
+    if (rawEntry.savePath.toLowerCase() !== `snapshots/${id}/save.es3` || rawEntry.metaPath.toLowerCase() !== `snapshots/${id}/meta.json`) throw new ImportRejectedError(`Unexpected snapshot paths at manifest entry ${index + 1}`);
+    totalSaveBytes += bytes;
+    if (totalSaveBytes > MAX_TOTAL_SAVE_BYTES) throw new ImportRejectedError('Catalog archive total save size exceeds the safety limit');
+    snapshots.push({ id, savePath: rawEntry.savePath, metaPath: rawEntry.metaPath, sha256, bytes });
   }
+  return { format: 'peppered-saves', version: 1, createdAt: manifest.createdAt, settingsPath: 'settings.json', snapshots };
 }
 
 async function readZipEntry(zip: JSZip, name: string, maxBytes: number): Promise<Buffer> {
@@ -124,14 +116,14 @@ export async function exportCatalog(catalog: ArchiveCatalog, outputPath: string)
     const snapshot = await catalog.getSnapshot(meta.id);
     const savePath = `snapshots/${meta.id}/save.es3`;
     const metaPath = `snapshots/${meta.id}/meta.json`;
-    manifest.snapshots.push({ id: meta.id, savePath, metaPath, sha256: meta.sha256, bytes: snapshot.bytes.length });
+    manifest.snapshots.push({ id: meta.id, savePath, metaPath, sha256: meta.sha256.toLowerCase(), bytes: snapshot.bytes.length });
     zip.file(savePath, snapshot.bytes);
     zip.file(metaPath, JSON.stringify(meta, null, 2));
   }
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
   const archive = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   if (archive.length > MAX_ARCHIVE_BYTES) throw new Error('Catalog export exceeds the safety limit');
-  await writeFile(outputPath, archive);
+  await atomicWriteFile(outputPath, archive);
   return { snapshotCount: snapshots.length, bytes: archive.length };
 }
 
@@ -139,87 +131,75 @@ export async function importCatalog(catalog: ArchiveCatalog, archivePath: string
   const archive = await readFile(archivePath);
   if (archive.length > MAX_ARCHIVE_BYTES) throw new ImportRejectedError('Catalog archive exceeds the safety limit');
   let zip: JSZip;
-  try {
-    zip = await JSZip.loadAsync(archive, { checkCRC32: true, createFolders: false });
-  } catch {
-    throw new ImportRejectedError('Catalog archive is not a readable ZIP archive');
-  }
+  try { zip = await JSZip.loadAsync(archive, { checkCRC32: true, createFolders: false }); }
+  catch { throw new ImportRejectedError('Catalog archive is not a readable ZIP archive'); }
   const entries = Object.values(zip.files);
   if (entries.length > MAX_ENTRIES * 3 + 3) throw new ImportRejectedError('Catalog archive has too many entries');
   for (const [name, entry] of Object.entries(zip.files)) {
     const originalName = (entry as JSZip.JSZipObject & { unsafeOriginalName?: string }).unsafeOriginalName ?? name;
     assertSafeArchivePath(originalName, 'archive entry');
     if (entry.dir && (name === 'snapshots/' || /^snapshots\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/$/i.test(name))) continue;
-    if (name !== 'manifest.json' && name !== 'settings.json' && !/^snapshots\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(save\.es3|meta\.json)$/i.test(name)) {
-      throw new ImportRejectedError(`Unexpected archive entry ${name}`);
-    }
+    if (name !== 'manifest.json' && name !== 'settings.json' && !/^snapshots\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(save\.es3|meta\.json)$/i.test(name)) throw new ImportRejectedError(`Unexpected archive entry ${name}`);
   }
   const manifestBytes = await readZipEntry(zip, 'manifest.json', MAX_META_BYTES);
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(manifestBytes.toString('utf8'));
-  } catch {
-    throw new ImportRejectedError('Catalog manifest is not valid JSON');
-  }
-  validateManifest(manifest);
+  let manifestValue: unknown;
+  try { manifestValue = JSON.parse(decodeUtf8(manifestBytes, 'Catalog manifest')) as unknown; }
+  catch (error) { if (error instanceof ImportRejectedError) throw error; throw new ImportRejectedError('Catalog manifest is not valid JSON'); }
+  const manifest = validateManifest(manifestValue);
   const settingsBytes = await readZipEntry(zip, manifest.settingsPath, MAX_META_BYTES);
+  let importedSettings: Pick<Settings, 'language' | 'scale'>;
   try {
-    const settings = JSON.parse(settingsBytes.toString('utf8')) as unknown;
+    const settings = JSON.parse(decodeUtf8(settingsBytes, 'Catalog settings')) as unknown;
     if (!isRecord(settings) || settings.version !== 1 || (settings.language !== 'en' && settings.language !== 'ru') || (settings.scale !== 100 && settings.scale !== 115 && settings.scale !== 130)) throw new Error();
-  } catch {
+    importedSettings = { language: settings.language, scale: settings.scale };
+  } catch (error) {
+    if (error instanceof ImportRejectedError) throw error;
     throw new ImportRejectedError('Catalog archive settings are invalid');
   }
   const existing = await catalog.listSnapshots();
-  const existingById = new Map(existing.map((snapshot) => [snapshot.id, snapshot]));
+  const existingById = new Map(existing.map((snapshot) => [snapshot.id.toLowerCase(), snapshot]));
   const existingByHash = new Set(existing.map((snapshot) => snapshot.sha256.toLowerCase()));
-  const report: ImportReport = { ok: true, added: 0, skipped: 0, rejected: 0, errors: [] };
   const staged: SnapshotFile[] = [];
-  let totalSaveBytes = 0;
   const stagedIds = new Set<string>();
   const stagedHashes = new Set<string>();
+  const errors: string[] = [];
+  let skipped = 0;
+  let actualTotalSaveBytes = 0;
 
   for (const entry of manifest.snapshots) {
     try {
       const saveBytes = await readZipEntry(zip, entry.savePath, MAX_SAVE_BYTES);
+      actualTotalSaveBytes += saveBytes.length;
+      if (actualTotalSaveBytes > MAX_TOTAL_SAVE_BYTES) throw new ImportLimitError('Catalog archive total save size exceeds the safety limit');
       const metaBytes = await readZipEntry(zip, entry.metaPath, MAX_META_BYTES);
-      totalSaveBytes += saveBytes.length;
-      if (totalSaveBytes > MAX_TOTAL_SAVE_BYTES) throw new ImportRejectedError('Catalog archive total save size exceeds the safety limit');
       const actualHash = createHash('sha256').update(saveBytes).digest('hex');
-      if (saveBytes.length !== entry.bytes || actualHash !== entry.sha256.toLowerCase()) throw new ImportRejectedError(`Snapshot ${entry.id} failed manifest hash validation`);
-      let meta: unknown;
-      try {
-        meta = JSON.parse(metaBytes.toString('utf8'));
-      } catch {
-        throw new ImportRejectedError(`Snapshot ${entry.id} metadata is not valid JSON`);
-      }
-      validateMeta(meta, entry.id);
-      if (meta.sha256.toLowerCase() !== actualHash || meta.bytes !== saveBytes.length) throw new ImportRejectedError(`Snapshot ${entry.id} failed metadata hash validation`);
+      if (saveBytes.length !== entry.bytes || actualHash !== entry.sha256) throw new ImportRejectedError(`Snapshot ${entry.id} failed manifest hash validation`);
+      let metaValue: unknown;
+      try { metaValue = JSON.parse(decodeUtf8(metaBytes, `Snapshot ${entry.id} metadata`)) as unknown; }
+      catch (error) { if (error instanceof ImportRejectedError) throw error; throw new ImportRejectedError(`Snapshot ${entry.id} metadata is not valid JSON`); }
+      const meta = validateSnapshotMeta(metaValue, entry.id);
+      if (meta.sha256 !== actualHash || meta.bytes !== saveBytes.length) throw new ImportRejectedError(`Snapshot ${entry.id} failed metadata hash validation`);
       parseSaveBytes(saveBytes);
       if (existingById.has(entry.id) || stagedIds.has(entry.id)) {
-        const known = existingById.get(entry.id);
-        if (known?.sha256.toLowerCase() === actualHash) report.skipped += 1;
-        else {
-          report.rejected += 1;
-          report.errors.push(`Duplicate snapshot id ${entry.id}`);
-        }
+        const known = existingById.get(entry.id) ?? staged.find((snapshot) => snapshot.meta.id === entry.id)?.meta;
+        if (known?.sha256.toLowerCase() === actualHash) skipped += 1;
+        else throw new ImportRejectedError(`Duplicate snapshot id ${entry.id}`);
         continue;
       }
       if (existingByHash.has(actualHash) || stagedHashes.has(actualHash)) {
-        report.skipped += 1;
+        skipped += 1;
         continue;
       }
       staged.push({ meta, bytes: saveBytes });
       stagedIds.add(entry.id);
       stagedHashes.add(actualHash);
     } catch (error) {
-      report.rejected += 1;
-      report.errors.push(error instanceof Error ? error.message : `Snapshot ${entry.id} was rejected`);
+      if (error instanceof ImportLimitError) throw error;
+      errors.push(error instanceof Error ? error.message : `Snapshot ${entry.id} was rejected`);
     }
   }
 
-  for (const snapshot of staged) {
-    await catalog.addImportedSnapshot(snapshot);
-    report.added += 1;
-  }
-  return report;
+  if (errors.length > 0) return { ok: false, added: 0, skipped, rejected: errors.length, errors };
+  await catalog.commitImportedSnapshots(staged, importedSettings);
+  return { ok: true, added: staged.length, skipped, rejected: 0, errors: [] };
 }

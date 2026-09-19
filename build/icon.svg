@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="PEPPERED Save Manager icon">
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="#171722" stroke="#9b8cff" stroke-width="10"/>
+  <circle cx="128" cy="128" r="78" fill="#28234d" stroke="#9b8cff" stroke-width="8"/>
+  <path d="M96 181V75h47c25 0 39 15 39 35s-14 35-39 35h-24" fill="none" stroke="#f4f0ff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="128" cy="128" r="11" fill="#f2c879"/>
+</svg>

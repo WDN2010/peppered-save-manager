@@ -1,8 +1,10 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { replaceAtomically } from '../src/core/atomic';
 import { CatalogRepository } from '../src/core/catalog';
+import type { SnapshotFile } from '../src/shared/types';
 
 const fixturePath = path.resolve('tests/fixtures/sample-save.es3');
 const fixtureBPath = path.resolve('tests/fixtures/sample-save-b.es3');
@@ -25,11 +27,22 @@ describe('catalog capture and restore safety', () => {
     expect(await readFile(path.join(root, 'snapshots', first.snapshot.id, 'save.es3'))).toEqual(bytes);
     expect(first.snapshot.title).toBe('Elevator practice');
     expect(first.snapshot.summary.description.en).toBe('Elevator area');
+    expect(first.snapshot.kind).toBe('manual');
 
     const second = await catalog.capture({ sourcePath: source, title: 'Same bytes' });
     expect(second.kind).toBe('duplicate');
     expect(second.snapshot.id).toBe(first.snapshot.id);
     expect((await catalog.listSnapshots())).toHaveLength(1);
+  });
+
+  it('serializes concurrent same-byte captures into one created result', async () => {
+    const { root, catalog } = await makeCatalog();
+    const source = path.join(root, 'Save.es3');
+    await writeFile(source, await readFile(fixturePath));
+    const results = await Promise.all(Array.from({ length: 8 }, (_, index) => catalog.capture({ sourcePath: source, title: `Concurrent ${index}` })));
+    expect(results.filter((result) => result.kind === 'created')).toHaveLength(1);
+    expect(results.filter((result) => result.kind === 'duplicate')).toHaveLength(7);
+    expect(await catalog.listSnapshots()).toHaveLength(1);
   });
 
   it('renames and deletes a snapshot by validated id', async () => {
@@ -39,12 +52,32 @@ describe('catalog capture and restore safety', () => {
     if (first.kind !== 'created') return;
     const renamed = await catalog.rename(first.snapshot.id, 'After');
     expect(renamed.title).toBe('After');
+    expect(renamed.kind).toBe('manual');
     await catalog.delete(first.snapshot.id);
     expect(await catalog.listSnapshots()).toEqual([]);
     await expect(catalog.delete('../outside')).rejects.toThrow('snapshot id');
   });
 
-  it('creates an automatic safety snapshot and atomically restores selected bytes', async () => {
+  it('creates a distinct recovery snapshot even when ordinary bytes already exist', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const ordinary = await catalog.capture({ sourcePath: target, title: 'Ordinary current' });
+    const selected = await catalog.capture({ sourcePath: fixtureBPath, title: 'Selected' });
+    expect(ordinary.kind).toBe('created');
+    expect(selected.kind).toBe('created');
+    if (selected.kind !== 'created') return;
+    const result = await catalog.restore(selected.snapshot.id, target);
+    expect(result.safetySnapshotId).toBeTruthy();
+    expect(result.safetySnapshotId).not.toBe(ordinary.kind === 'created' ? ordinary.snapshot.id : null);
+    const safety = await catalog.getSnapshot(result.safetySnapshotId!);
+    expect(safety.meta.kind).toBe('recovery');
+    expect(safety.meta.title).toBe('Recovery copy');
+    const renamed = await catalog.rename(safety.meta.id, 'Named recovery');
+    expect(renamed.kind).toBe('manual');
+  });
+
+  it('restores with an atomic replacement and does not create a recovery when bytes match', async () => {
     const { root, catalog } = await makeCatalog();
     const target = path.join(root, 'Save.es3');
     await writeFile(target, await readFile(fixtureBPath));
@@ -57,20 +90,78 @@ describe('catalog capture and restore safety', () => {
     expect(result.safetySnapshotId).toBeTruthy();
     expect(await readFile(target)).toEqual(await readFile(fixturePath));
     const safety = await catalog.getSnapshot(result.safetySnapshotId!);
-    expect(safety.meta.title).toMatch(/Recovery/);
+    expect(safety.meta.kind).toBe('recovery');
+    const noNewRecovery = await catalog.restore(captured.snapshot.id, target);
+    expect(noNewRecovery.safetySnapshotId).toBeNull();
   });
 
-  it('refuses invalid targets and detects tampered snapshots before replacing anything', async () => {
-    const { root, catalog } = await makeCatalog();
+  it('preserves the original and reports a recovery temp when replacement fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-atomic-'));
     const target = path.join(root, 'Save.es3');
-    await writeFile(target, await readFile(fixtureBPath));
-    const captured = await catalog.capture({ sourcePath: fixturePath, title: 'A checkpoint' });
+    const original = Buffer.from('original');
+    await writeFile(target, original);
+    const injectedRename = async () => {
+      const error = new Error('sharing violation') as NodeJS.ErrnoException;
+      error.code = 'EBUSY';
+      throw error;
+    };
+    let failure: Error | undefined;
+    try { await replaceAtomically(target, Buffer.from('replacement'), { rename: injectedRename, retries: 0 }); }
+    catch (error) { failure = error as Error; }
+    expect(failure?.message).toMatch(/Temporary recovery file preserved at/);
+    expect(await readFile(target)).toEqual(original);
+    const evidence = failure?.message.match(/preserved at (.+)$/)?.[1];
+    expect(evidence).toBeTruthy();
+    await expect(stat(evidence!)).resolves.toBeDefined();
+  });
+
+  it('rejects symlink targets and symlink parents before replacement', async () => {
+    const { root, catalog } = await makeCatalog();
+    const realDirectory = path.join(root, 'real');
+    const linkDirectory = path.join(root, 'link');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(realDirectory));
+    const realTarget = path.join(realDirectory, 'Save.es3');
+    await writeFile(realTarget, await readFile(fixtureBPath));
+    await symlink(realDirectory, linkDirectory, 'junction');
+    await expect(catalog.restore('11111111-1111-4111-8111-111111111111', path.join(linkDirectory, 'Save.es3'))).rejects.toThrow(/symlink|real directory/i);
+
+    const target = path.join(root, 'Save.es3');
+    await symlink(realTarget, target);
+    await expect(replaceAtomically(target, Buffer.from('replacement'))).rejects.toThrow(/regular file|symlink/i);
+  });
+
+  it('skips corrupt local metadata and normalizes invalid persisted save paths', async () => {
+    const { root, catalog } = await makeCatalog();
+    const captured = await catalog.capture({ sourcePath: fixturePath, title: 'Corrupt me' });
     expect(captured.kind).toBe('created');
     if (captured.kind !== 'created') return;
-    await expect(catalog.restore(captured.snapshot.id, path.join(root, 'not-save.json'))).rejects.toThrow('Save.es3');
-    await writeFile(path.join(root, 'snapshots', captured.snapshot.id, 'save.es3'), Buffer.from('tampered'));
-    await expect(catalog.restore(captured.snapshot.id, target)).rejects.toThrow('hash');
-    expect(await readFile(target)).toEqual(await readFile(fixtureBPath));
-    await expect(stat(path.join(root, 'snapshots', captured.snapshot.id, 'meta.json'))).resolves.toBeDefined();
+    const metaPath = path.join(root, 'snapshots', captured.snapshot.id, 'meta.json');
+    const metadata = JSON.parse(await readFile(metaPath, 'utf8')) as Record<string, unknown>;
+    metadata.summary = { description: { en: 'not complete', ru: 'not complete' } };
+    await writeFile(metaPath, JSON.stringify(metadata));
+    expect(await catalog.listSnapshots()).toEqual([]);
+    await writeFile(path.join(root, 'settings.json'), JSON.stringify({ version: 1, language: 'en', scale: 100, savePath: path.join(root, 'not-save.json') }));
+    expect((await catalog.getSettings()).savePath).toBeNull();
+  });
+
+  it('rolls back every newly-added snapshot when a batch commit fails', async () => {
+    const source = await makeCatalog();
+    const destination = await makeCatalog();
+    const first = await source.catalog.capture({ sourcePath: fixturePath, title: 'Batch one' });
+    const second = await source.catalog.capture({ sourcePath: fixtureBPath, title: 'Batch two' });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+    const snapshots: SnapshotFile[] = [await source.catalog.getSnapshot(first.snapshot.id), await source.catalog.getSnapshot(second.snapshot.id)];
+    const repository = destination.catalog as unknown as { createSnapshot: (snapshot: SnapshotFile) => Promise<unknown> };
+    const originalCreate = repository.createSnapshot.bind(destination.catalog);
+    let calls = 0;
+    repository.createSnapshot = async (snapshot) => {
+      calls += 1;
+      if (calls === 2) throw new Error('injected commit failure');
+      return originalCreate(snapshot);
+    };
+    await expect(destination.catalog.commitImportedSnapshots(snapshots)).rejects.toThrow('injected commit failure');
+    expect(await destination.catalog.listSnapshots()).toEqual([]);
   });
 });

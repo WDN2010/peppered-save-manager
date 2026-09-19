@@ -12,29 +12,32 @@ export interface CheckpointDescription {
   ru: string;
 }
 
+export type SnapshotKind = 'manual' | 'recovery';
+
 export interface SaveSummary {
   sceneCode: string | null;
   position: PositionSummary | null;
   deathCount: number | null;
-  chapter: number | string | null;
-  regret: boolean | null;
-  abyssState: string | null;
+  chapter: Record<string, number> | null;
+  regret: number | null;
+  abyssState: number | null;
   choiceCount: number | null;
   inventoryCount: number | null;
   stars: number | null;
   coins: number | null;
-  greenGem: number | null;
+  greenGem: Record<string, number> | null;
   enemyCount: number | null;
-  track: string | null;
+  track: number | null;
   volume: number | null;
   description: CheckpointDescription;
-  title?: string | null;
+  title: string | null;
 }
 
 export interface SnapshotMeta {
   version: 1;
   id: string;
   title: string;
+  kind: SnapshotKind;
   capturedAt: string;
   sourcePath: string;
   sha256: string;

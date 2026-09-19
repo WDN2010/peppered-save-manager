@@ -5,11 +5,12 @@ import { t } from '../i18n';
 interface LiveSaveStripProps {
   state: AppState;
   language: Language;
+  busy: boolean;
   onChoosePath: () => void;
   onCapture: () => void;
 }
 
-export function LiveSaveStrip({ state, language, onChoosePath, onCapture }: LiveSaveStripProps) {
+export function LiveSaveStrip({ state, language, busy, onChoosePath, onCapture }: LiveSaveStripProps) {
   const statusKey = state.live.state === 'detected' ? 'detected' : state.live.state;
   const copyKey = state.live.state === 'detected' ? 'detectedCopy' : `${state.live.state}Copy` as 'missingCopy' | 'invalidCopy' | 'unreadableCopy';
   return (
@@ -25,8 +26,8 @@ export function LiveSaveStrip({ state, language, onChoosePath, onCapture }: Live
         <code title={state.activePath}>{state.activePath}</code>
       </div>
       <div className="live-actions">
-        <button type="button" className="button button-quiet" onClick={onChoosePath}>{t(language, 'choosePath')}</button>
-        <button type="button" className="button button-primary" onClick={onCapture} disabled={state.live.state !== 'detected'}>{t(language, 'saveCurrent')}</button>
+        <button type="button" className="button button-quiet" onClick={onChoosePath} disabled={busy}>{t(language, 'choosePath')}</button>
+        <button type="button" className="button button-primary" onClick={onCapture} disabled={busy || state.live.state !== 'detected'}>{t(language, 'saveCurrent')}</button>
       </div>
     </section>
   );

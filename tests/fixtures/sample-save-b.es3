@@ -1,7 +1,16 @@
 {
-  "LvlName": "B_0",
-  "Pos": { "_ES3Type": "Vector3", "value": { "x": 0, "y": 1, "z": 2 } },
-  "DeathCount": 0,
-  "Chapter": 2,
-  "Choices": {}
+  "LvlName": { "__type": "string", "value": "B_0" },
+  "Pos": { "__type": "Vector3", "value": { "x": 0, "y": 1, "z": 2 } },
+  "DeathCount": { "__type": "int", "value": 0 },
+  "Chapter": { "__type": "Dictionary<string,int>", "value": { "main": 2 } },
+  "Regret": { "__type": "int", "value": 0 },
+  "Abyss_State": { "__type": "int", "value": 0 },
+  "Choices": { "__type": "Dictionary<string,string>", "value": {} },
+  "TheStuff": { "__type": "Dictionary<string,bool>", "value": {} },
+  "Stars": { "__type": "int", "value": 0 },
+  "Coins": { "__type": "int", "value": 0 },
+  "Green Gem": { "__type": "Dictionary<string,int>", "value": {} },
+  "Enemies": { "__type": "Dictionary<string,int>", "value": {} },
+  "Track": { "__type": "int", "value": 0 },
+  "Volume": { "__type": "float", "value": 0.75 }
 }

@@ -5,6 +5,7 @@ import { t } from '../i18n';
 interface DetailPaneProps {
   snapshot: SnapshotMeta | null;
   language: Language;
+  disabled: boolean;
   onRename: (title: string) => void;
   onRestore: () => void;
   onDelete: () => void;
@@ -15,10 +16,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(bytes < 1024 * 100 ? 1 : 0)} KB`;
 }
 
-export function DetailPane({ snapshot, language, onRename, onRestore, onDelete }: DetailPaneProps) {
+function formatMap(value: Record<string, number> | null): string {
+  if (!value || Object.keys(value).length === 0) return '—';
+  return Object.entries(value).map(([key, entry]) => `${key}: ${entry}`).join(' · ');
+}
+
+export function DetailPane({ snapshot, language, disabled, onRename, onRestore, onDelete }: DetailPaneProps) {
   const [technical, setTechnical] = useState(false);
   if (!snapshot) return <section className="detail-panel detail-empty" aria-live="polite"><span className="empty-mark" aria-hidden="true">↗</span><strong>{t(language, 'noSelection')}</strong></section>;
   const description = snapshot.summary.description[language];
+  const title = snapshot.kind === 'recovery' ? t(language, 'recoveryTitle') : snapshot.title;
   const locale = language === 'ru' ? 'ru-RU' : 'en-US';
   return (
     <section className="detail-panel" aria-labelledby="detail-heading">
@@ -26,17 +33,17 @@ export function DetailPane({ snapshot, language, onRename, onRestore, onDelete }
       <div className="detail-heading-row">
         <div>
           <div className="section-kicker">{description}</div>
-          <h1 id="detail-heading">{snapshot.title}</h1>
+          <h1 id="detail-heading">{title}</h1>
         </div>
         <div className="detail-actions">
-          <button type="button" className="button button-primary" onClick={onRestore}>{t(language, 'restore')}</button>
-          <button type="button" className="button button-quiet" onClick={() => onRename(snapshot.title)}>{t(language, 'rename')}</button>
-          <button type="button" className="button button-danger" onClick={onDelete}>{t(language, 'delete')}</button>
+          <button type="button" className="button button-primary" onClick={onRestore} disabled={disabled}>{t(language, 'restore')}</button>
+          <button type="button" className="button button-quiet" onClick={() => onRename(title)} disabled={disabled}>{t(language, 'rename')}</button>
+          <button type="button" className="button button-danger" onClick={onDelete} disabled={disabled}>{t(language, 'delete')}</button>
         </div>
       </div>
       <div className="checkpoint-card">
         <span className="checkpoint-dot" aria-hidden="true" />
-        <div><span className="card-label">{t(language, 'snapshots')}</span><strong>{description}</strong><p>{language === 'ru' ? 'Безопасная копия полного состояния сохранения.' : 'A safe copy of the complete persisted game state.'}</p></div>
+        <div><span className="card-label">{t(language, 'snapshots')}</span><strong>{title}</strong><p>{t(language, 'safeCopy')}</p></div>
       </div>
       <button type="button" className="technical-toggle" aria-expanded={technical} onClick={() => setTechnical((value) => !value)}>{technical ? t(language, 'hideTechnical') : t(language, 'technical')}<span aria-hidden="true">{technical ? '−' : '+'}</span></button>
       {technical && <dl className="technical-grid">
@@ -44,12 +51,17 @@ export function DetailPane({ snapshot, language, onRename, onRestore, onDelete }
         <div><dt>{t(language, 'hash')}</dt><dd className="hash-value">{snapshot.sha256}</dd></div>
         <div><dt>{t(language, 'bytes')}</dt><dd>{formatBytes(snapshot.bytes)}</dd></div>
         <div><dt>{t(language, 'source')}</dt><dd className="path-value">{snapshot.sourcePath}</dd></div>
+        <div><dt>{t(language, 'chapter')}</dt><dd>{formatMap(snapshot.summary.chapter)}</dd></div>
+        <div><dt>{t(language, 'regret')}</dt><dd>{snapshot.summary.regret ?? '—'}</dd></div>
+        <div><dt>{t(language, 'abyssState')}</dt><dd>{snapshot.summary.abyssState ?? '—'}</dd></div>
+        <div><dt>{t(language, 'greenGem')}</dt><dd>{formatMap(snapshot.summary.greenGem)}</dd></div>
+        <div><dt>{t(language, 'track')}</dt><dd>{snapshot.summary.track ?? '—'}</dd></div>
       </dl>}
-      <div className="stats-grid" aria-label={language === 'ru' ? 'Сводка точки' : 'Checkpoint summary'}>
-        <div><span>{language === 'ru' ? 'Смертей' : 'Deaths'}</span><strong>{snapshot.summary.deathCount ?? '—'}</strong></div>
-        <div><span>{language === 'ru' ? 'Глава' : 'Chapter'}</span><strong>{snapshot.summary.chapter ?? '—'}</strong></div>
-        <div><span>{language === 'ru' ? 'Звёзды' : 'Stars'}</span><strong>{snapshot.summary.stars ?? '—'}</strong></div>
-        <div><span>{language === 'ru' ? 'Монеты' : 'Coins'}</span><strong>{snapshot.summary.coins ?? '—'}</strong></div>
+      <div className="stats-grid" aria-label={t(language, 'summaryLabel')}>
+        <div><span>{t(language, 'deaths')}</span><strong>{snapshot.summary.deathCount ?? '—'}</strong></div>
+        <div><span>{t(language, 'stars')}</span><strong>{snapshot.summary.stars ?? '—'}</strong></div>
+        <div><span>{t(language, 'coins')}</span><strong>{snapshot.summary.coins ?? '—'}</strong></div>
+        <div><span>{t(language, 'choices')}</span><strong>{snapshot.summary.choiceCount ?? '—'}</strong></div>
       </div>
     </section>
   );

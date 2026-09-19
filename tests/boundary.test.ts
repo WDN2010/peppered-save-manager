@@ -1,0 +1,53 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const root = path.resolve('.');
+const read = (file: string) => readFile(path.join(root, file), 'utf8');
+
+describe('Electron and renderer release boundaries', () => {
+  it('packages a sandbox-compatible CommonJS preload and points BrowserWindow at it', async () => {
+    const config = await read('electron.vite.config.ts');
+    const main = await read('src/main/index.ts');
+    expect(config).toMatch(/format:\s*['"]cjs['"]/);
+    expect(config).toMatch(/entryFileNames:\s*['"]\[name\]\.cjs['"]/);
+    expect(main).toContain("preload: path.join(__dirname, '../preload/index.cjs')");
+    expect(main).toContain('sandbox: true');
+    expect(main).toContain('contextIsolation: true');
+  });
+
+  it('locks the trusted renderer boundary and denies navigation or popups', async () => {
+    const main = await read('src/main/index.ts');
+    expect(main).toContain('event.senderFrame.url');
+    expect(main).toContain('setWindowOpenHandler(() => ({ action: \'deny\' }))');
+    expect(main).toContain("mainWindow.webContents.on('will-navigate'");
+    expect(main).toContain("if (rendererUrl) await mainWindow.loadURL(rendererUrl);");
+    expect(main).toContain("else await mainWindow.loadFile");
+    expect(main).toContain("Menu.setApplicationMenu(null)");
+    expect(main).toContain('app.requestSingleInstanceLock()');
+  });
+
+  it('uses a strict CSP, localized document language, scale-aware text, and semantic list buttons', async () => {
+    const html = await read('src/renderer/index.html');
+    const css = await read('src/renderer/styles.css');
+    const app = await read('src/renderer/App.tsx');
+    const list = await read('src/renderer/components/SnapshotList.tsx');
+    expect(html).toContain("default-src 'self'");
+    expect(html).toContain("object-src 'none'");
+    expect(app).toContain('document.documentElement.lang = language');
+    expect(css).toContain('--text-md: calc(13px * var(--ui-scale, 1))');
+    expect(css).toContain('--subtle: oklch(0.82');
+    expect(css).toContain('color: var(--ink); border-color: var(--primary-fill);');
+    expect(list).toContain('<li key={snapshot.id}>');
+    expect(list).not.toContain('role="listitem"');
+  });
+
+  it('pins Electron and ships the original icon in the portable file set', async () => {
+    const packageJson = JSON.parse(await read('package.json')) as { devDependencies: Record<string, string>; build: { files: string[]; win: { icon: string } } };
+    expect(packageJson.devDependencies.electron).toBe('44.4.1');
+    expect(packageJson.build.win.icon).toBe('build/icon.ico');
+    expect(packageJson.build.files).toContain('build/icon.ico');
+    const icon = await readFile(path.join(root, 'build/icon.ico'));
+    expect(icon.subarray(0, 6)).toEqual(Buffer.from([0, 0, 1, 0, 4, 0]));
+  });
+});
