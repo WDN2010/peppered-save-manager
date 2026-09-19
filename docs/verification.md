@@ -1,10 +1,10 @@
 # Verification receipt
 
-Verified on `2026-09-19T22:34:47+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-19T23:52:45+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
-- `npm test` — PASS: 4 test files, 31 tests.
+- `npm test` — PASS: 5 test files, 41 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
 - `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true capture=true inlineError=true title=PEPPERED Save Manager lang=ru`.
@@ -15,9 +15,9 @@ Verified on `2026-09-19T22:34:47+03:00` from `/home/wdn2010/peppered-save-manage
 
 ## Artifact
 
-- Path: `release/PEPPERED-Save-Manager-1.0.2-portable.exe`
-- Size: `99,882,473` bytes
-- SHA-256: `798080dc01fea2ae849ba145f1b69cefe45494b95a8a67020515221b42262802`
+- Path: `release/PEPPERED-Save-Manager-1.0.3-portable.exe`
+- Size: `99,884,833` bytes
+- SHA-256: `41f7906cdd910890d6e48303565ad87fb032b46a3f2d36c038d1e82225a4d131`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
 - Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
@@ -33,7 +33,7 @@ Regression tests cover:
 - fatal invalid UTF-8 rejection and meaningful PEPPERED ES3 shape validation;
 - actual `__type` / `value` wrappers and corrected PEPPERED field types;
 - concurrent same-byte capture deduplication, symlink-source rejection, and stable-source reads;
-- bounded retry of transient Windows `EBUSY`/sharing-lock failures and a stable busy-file error after exhaustion;
+- bounded retry of positively identified transient Windows sharing-lock failures, preservation of ordinary EACCES/EPERM permission errors, source-change errors after retry exhaustion, and the persistent busy contract;
 - stable recovery reads, distinct automatic recovery snapshots, and explicit absent/identical/different prior-state results;
 - prefilled human-readable capture titles, enabled first-click capture, and inline modal errors for failed actions;
 - changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
@@ -43,7 +43,7 @@ Regression tests cover:
 - serialized settings repair versus concurrent updates;
 - sandbox-compatible preload output, CSP/navigation/IPC boundaries, the fixed Steam launch bridge, localized preserved-temporary-file failures, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
 
-The C# source embedded in the PowerShell helper was extracted and compiled successfully with Mono `mcs`. The compiled helper was then executed through Wine Mono against the current Win32 calls: existing-target replacement and absent-target creation passed; a changed target and a concurrently held writable handle both failed closed while preserving target and temporary bytes. A focused Windows-Node probe through the packaged Electron runtime also held `Save.es3` with an exclusive handle: a 350 ms lock was retried and captured successfully, while a persistent lock returned the stable user-facing `EBUSY` contract without writing a snapshot. `scripts/windows-replace-smoke.ps1` provides the equivalent native-Windows restore gate.
+The tracked native Windows lock regression is `npm run test:windows-save-lock`. It holds `Save.es3` with an exclusive native handle, starts the transient production `getState()` probe only after the lock is acquired, exercises bounded retry and persistent busy classification, verifies the busy-state capture path stays available, and asserts no snapshot plus localized inline busy copy. It was not run on this Linux host; the script is syntax/static-checkable here and remains an external native-Windows acceptance gate. The existing Linux Electron smoke is the verified preload/IPC/renderer smoke, and the guarded-replace helper remains a separate native Windows gate.
 
 ## Visual QA
 
@@ -60,4 +60,4 @@ The final layouts kept all controls reachable, switched to a vertically scrollab
 
 ## Runtime limitation
 
-A real Windows host was not available in this environment. The focused helper did pass its Win32 calls through Wine Mono, but that is not a substitute for running `npm run test:windows-helper` on native Windows. The portable NSIS wrapper and unpacked Electron executable did not yield a conclusive full-app Wine smoke result (`wine_exit=2` and `wine_exit=3`; Wine reported experimental WoW64 / network-change and crashpad errors). The production Linux Electron launch is the verified preload/IPC/renderer smoke; a final native Windows launch remains recommended before public distribution.
+A real Windows host was not available in this environment. The focused helper did pass its Win32 calls through Wine Mono, but that is not a substitute for running `npm run test:windows-helper` and `npm run test:windows-save-lock` on native Windows. The portable NSIS wrapper and unpacked Electron executable did not yield a conclusive full-app Wine smoke result (`wine_exit=2` and `wine_exit=3`; Wine reported experimental WoW64 / network-change and crashpad errors). The production Linux Electron launch is the verified preload/IPC/renderer smoke; a final native Windows launch remains recommended before wider public distribution.

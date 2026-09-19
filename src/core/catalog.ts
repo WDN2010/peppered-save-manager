@@ -55,11 +55,26 @@ function saveReadErrorCode(error: unknown): string {
   return error && typeof error === 'object' && 'code' in error ? String((error as NodeJS.ErrnoException).code ?? '') : '';
 }
 
-function isTransientSaveReadError(error: unknown): boolean {
+function saveReadErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function isSaveBusyError(error: unknown): boolean {
   const code = saveReadErrorCode(error);
-  const message = error instanceof Error ? error.message : String(error);
-  return ['EBUSY', 'EACCES', 'EPERM', 'ETXTBSY'].includes(code)
-    || /capture source changed while|resource busy|sharing violation/i.test(message);
+  return code === 'EBUSY' || code === 'ETXTBSY' || /resource[\s_-]+busy|sharing[\s_-]+violation/i.test(saveReadErrorMessage(error));
+}
+
+export function isSaveSourceChangedError(error: unknown): boolean {
+  return /capture source changed while/i.test(saveReadErrorMessage(error));
+}
+
+export function isSavePermissionDeniedError(error: unknown): boolean {
+  const code = saveReadErrorCode(error);
+  return !isSaveBusyError(error) && (code === 'EACCES' || code === 'EPERM' || /permission denied|operation not permitted|access is denied/i.test(saveReadErrorMessage(error)));
+}
+
+function isRetryableSaveReadError(error: unknown): boolean {
+  return isSaveBusyError(error) || isSaveSourceChangedError(error);
 }
 
 export async function retryTransientSaveRead<T>(
@@ -71,8 +86,9 @@ export async function retryTransientSaveRead<T>(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try { return await operation(); }
     catch (error) {
-      if (!isTransientSaveReadError(error)) throw error;
+      if (!isRetryableSaveReadError(error)) throw error;
       if (attempt + 1 >= attempts) {
+        if (isSaveSourceChangedError(error) || !isSaveBusyError(error)) throw error;
         const busy = new Error('Save.es3 is busy or changing. Wait for PEPPERED to finish saving and try again.') as NodeJS.ErrnoException;
         busy.code = 'EBUSY';
         busy.cause = error;
@@ -109,8 +125,12 @@ async function readStableCaptureAttempt(sourcePath: string): Promise<Buffer> {
   }
 }
 
-async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
+export async function readStableSave(sourcePath: string): Promise<Buffer> {
   return retryTransientSaveRead(() => readStableCaptureAttempt(sourcePath));
+}
+
+async function readStableCaptureSource(sourcePath: string): Promise<Buffer> {
+  return readStableSave(sourcePath);
 }
 
 export class CatalogRepository {

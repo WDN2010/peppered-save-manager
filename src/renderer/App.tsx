@@ -22,8 +22,9 @@ function friendlyErrorStatus(error: unknown): StatusState {
   const temporaryPath = message.match(/Temporary recovery file preserved at (.+)$/i)?.[1]?.trim();
   if (temporaryPath) return { key: /changed while restore/i.test(message) ? 'restoreChangedWithTemp' : 'restoreFailedWithTemp', vars: { path: temporaryPath } };
   if (/Close PEPPERED|закройте PEPPERED|Could not verify|changed while restore|guarded replacement failed/i.test(message)) return { key: 'closeGame' };
-  if (/Save\.es3 is busy or changing|EBUSY|resource busy|sharing violation/i.test(message)) return { key: 'saveBusy' };
+  if (/EACCES|EPERM|permission denied|operation not permitted|access is denied/i.test(message) && !/resource[\s_-]+busy|sharing[\s_-]+violation/i.test(message)) return { key: 'savePermissionDenied' };
   if (/capture source changed|changed while it was being read/i.test(message)) return { key: 'saveChangedDuringCapture' };
+  if (/Save\.es3 is busy or changing|EBUSY|resource[\s_-]+busy|sharing[\s_-]+violation/i.test(message)) return { key: 'saveBusy' };
   if (/not a supported PEPPERED Easy Save 3 document/i.test(message)) return { key: 'unsupportedSave' };
   if (/Save is empty|not valid JSON|not valid UTF-8/i.test(message)) return { key: 'invalidSave' };
   if (/not found|не найдено/i.test(message)) return { key: 'notFound' };
@@ -110,7 +111,7 @@ export default function App() {
   const capture = () => {
     setModalError(null);
     void runMutation(async () => {
-      if (!state || state.live.state !== 'detected' || !modal || modal.kind !== 'capture') throw new Error('Choose a valid Save.es3 path');
+      if (!state || (state.live.state !== 'detected' && state.live.state !== 'busy') || !modal || modal.kind !== 'capture') throw new Error('Choose a valid Save.es3 path');
       const result = await window.peppered.capture(modal.value.trim());
       setState(result.state);
       setSelectedId(result.snapshot.id);

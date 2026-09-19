@@ -59,11 +59,11 @@ select, input { color: var(--ink); border: 1px solid var(--border); border-radiu
 
 .status-line { min-height: calc(25px * var(--ui-scale, 1)); padding: 6px calc(28px * var(--ui-scale, 1)) 0; color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .live-strip { display: grid; grid-template-columns: auto minmax(180px, 1fr) minmax(220px, 1.15fr) auto; align-items: center; gap: calc(16px * var(--ui-scale, 1)); margin: calc(8px * var(--ui-scale, 1)) calc(28px * var(--ui-scale, 1)) calc(18px * var(--ui-scale, 1)); padding: calc(13px * var(--ui-scale, 1)) calc(15px * var(--ui-scale, 1)); border: 1px solid var(--border); border-left: 3px solid var(--success); border-radius: 9px; background: var(--surface-1); }
-.live-missing, .live-invalid, .live-unreadable { border-left-color: var(--accent); }
+.live-busy, .live-permission, .live-missing, .live-invalid, .live-unreadable { border-left-color: var(--accent); }
 .live-signal { display: grid; place-items: center; width: calc(30px * var(--ui-scale, 1)); height: calc(30px * var(--ui-scale, 1)); border-radius: 50%; background: color-mix(in oklch, var(--success) 16%, transparent); }
 .live-signal span { width: 9px; height: 9px; border-radius: 50%; background: var(--success); }
-.live-missing .live-signal, .live-invalid .live-signal, .live-unreadable .live-signal { background: var(--accent-soft); }
-.live-missing .live-signal span, .live-invalid .live-signal span, .live-unreadable .live-signal span { background: var(--accent); }
+.live-busy .live-signal, .live-permission .live-signal, .live-missing .live-signal, .live-invalid .live-signal, .live-unreadable .live-signal { background: var(--accent-soft); }
+.live-busy .live-signal span, .live-permission .live-signal span, .live-missing .live-signal span, .live-invalid .live-signal span, .live-unreadable .live-signal span { background: var(--accent); }
 .section-kicker { color: var(--subtle); font-size: var(--text-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .live-copy { display: grid; gap: 3px; min-width: 0; }
 .live-copy strong { font-size: var(--text-md); }

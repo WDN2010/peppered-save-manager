@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rename, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -37,12 +37,63 @@ describe('save read retries', () => {
     expect(waits).toEqual([40, 80]);
   });
 
-  it('returns a stable user-facing busy error after bounded retries', async () => {
+  it('retries an explicit sharing violation even when Windows reports EACCES', async () => {
+    let calls = 0;
+    const result = await retryTransientSaveRead(async () => {
+      calls += 1;
+      if (calls === 1) {
+        const error = new Error('ERROR_SHARING_VIOLATION: the file is being used by another process') as NodeJS.ErrnoException;
+        error.code = 'EACCES';
+        throw error;
+      }
+      return 'captured';
+    }, { wait: async () => undefined });
+    expect(result).toBe('captured');
+    expect(calls).toBe(2);
+  });
+
+  it('preserves a permission error instead of treating it as a busy lock', async () => {
+    let calls = 0;
+    const run = retryTransientSaveRead(async () => {
+      calls += 1;
+      const error = new Error('EACCES: permission denied, open Save.es3') as NodeJS.ErrnoException;
+      error.code = 'EACCES';
+      throw error;
+    }, { attempts: 3, wait: async () => undefined });
+    await expect(run).rejects.toMatchObject({ code: 'EACCES', message: expect.stringMatching(/permission denied/i) });
+    expect(calls).toBe(1);
+  });
+
+  it('preserves an operation-not-permitted error without lock evidence', async () => {
     let calls = 0;
     const run = retryTransientSaveRead(async () => {
       calls += 1;
       const error = new Error('EPERM: operation not permitted') as NodeJS.ErrnoException;
       error.code = 'EPERM';
+      throw error;
+    }, { attempts: 3, wait: async () => undefined });
+    await expect(run).rejects.toMatchObject({ code: 'EPERM', message: expect.stringMatching(/operation not permitted/i) });
+    expect(calls).toBe(1);
+  });
+
+  it('retries source changes but preserves the source-change contract after exhaustion', async () => {
+    let calls = 0;
+    const sourceChanged = new Error('The capture source changed while it was being read') as NodeJS.ErrnoException;
+    sourceChanged.code = 'EBUSY';
+    const run = retryTransientSaveRead(async () => {
+      calls += 1;
+      throw sourceChanged;
+    }, { attempts: 3, wait: async () => undefined });
+    await expect(run).rejects.toBe(sourceChanged);
+    expect(calls).toBe(3);
+  });
+
+  it('returns a stable user-facing busy error after bounded retries', async () => {
+    let calls = 0;
+    const run = retryTransientSaveRead(async () => {
+      calls += 1;
+      const error = new Error('resource busy or locked') as NodeJS.ErrnoException;
+      error.code = 'EBUSY';
       throw error;
     }, { attempts: 3, wait: async () => undefined });
     await expect(run).rejects.toMatchObject({ code: 'EBUSY', message: expect.stringMatching(/busy or changing/i) });
@@ -51,6 +102,13 @@ describe('save read retries', () => {
 });
 
 describe('catalog capture and restore safety', () => {
+  it('does not create a snapshot after a persistent source read failure', async () => {
+    const { root, catalog } = await makeCatalog();
+    const source = path.join(root, 'Save.es3');
+    await mkdir(source);
+    await expect(catalog.capture({ sourcePath: source, title: 'Should not exist' })).rejects.toThrow(/regular file/i);
+    expect(await catalog.listSnapshots()).toEqual([]);
+  });
   it('captures exact bytes, stores metadata, and deduplicates content', async () => {
     const { root, catalog } = await makeCatalog();
     const source = path.join(root, 'Save.es3');

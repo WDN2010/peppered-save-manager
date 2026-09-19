@@ -12,7 +12,8 @@ interface LiveSaveStripProps {
 
 export function LiveSaveStrip({ state, language, busy, onChoosePath, onCapture }: LiveSaveStripProps) {
   const statusKey = state.live.state === 'detected' ? 'detected' : state.live.state;
-  const copyKey = state.live.state === 'detected' ? 'detectedCopy' : `${state.live.state}Copy` as 'missingCopy' | 'invalidCopy' | 'unreadableCopy';
+  const copyKey = state.live.state === 'detected' ? 'detectedCopy' : `${state.live.state}Copy` as 'busyCopy' | 'permissionCopy' | 'missingCopy' | 'invalidCopy' | 'unreadableCopy';
+  const captureAvailable = state.live.state === 'detected' || state.live.state === 'busy';
   return (
     <section className={`live-strip live-${state.live.state}`} aria-labelledby="live-save-heading">
       <div className="live-signal" aria-hidden="true"><span /></div>
@@ -27,7 +28,7 @@ export function LiveSaveStrip({ state, language, busy, onChoosePath, onCapture }
       </div>
       <div className="live-actions">
         <button type="button" className="button button-quiet" onClick={onChoosePath} disabled={busy}>{t(language, 'choosePath')}</button>
-        <button type="button" className="button button-primary" onClick={onCapture} disabled={busy || state.live.state !== 'detected'}>{t(language, 'saveCurrent')}</button>
+        <button type="button" className="button button-primary" onClick={onCapture} disabled={busy || !captureAvailable}>{t(language, 'saveCurrent')}</button>
       </div>
     </section>
   );

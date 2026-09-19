@@ -4,12 +4,10 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CatalogRepository, isValidSaveTarget, isValidSnapshotId } from '../core/catalog';
+import { inspectLiveSave } from '../core/live';
 import { ImportRejectedError } from '../core/archive';
-import { MAX_SAVE_BYTES, parseSaveBytes } from '../core/es3';
-import { sameFilesystemPath } from '../core/validation';
-import type { AppState, CaptureResponse, LiveSaveStatus, RestoreAndLaunchResponse, RestoreResponse } from '../shared/ipc';
+import type { AppState, CaptureResponse, RestoreAndLaunchResponse, RestoreResponse } from '../shared/ipc';
 import type { Language, Settings, UiScale } from '../shared/types';
-import { lstat, readFile, realpath } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_RELATIVE_SAVE = path.join('AppData', 'LocalLow', 'Mostly Games', 'PEPPERED', 'Save.es3');
@@ -91,29 +89,10 @@ export function registerIpc(catalog: CatalogRepository): void {
   const getSettings = () => catalog.getSettings();
   const resolveActivePath = (settings: Settings) => settings.savePath ?? defaultSavePath();
 
-  const readLive = async (activePath: string): Promise<LiveSaveStatus> => {
-    try {
-      const parent = path.dirname(path.resolve(activePath));
-      const parentInfo = await lstat(parent);
-      const info = await lstat(activePath);
-      if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink() || !sameFilesystemPath(await realpath(parent), parent) || !info.isFile() || info.isSymbolicLink() || info.size > MAX_SAVE_BYTES) {
-        return { state: 'invalid', path: activePath, summary: null, message: 'invalid' };
-      }
-      const bytes = await readFile(activePath);
-      const parsed = parseSaveBytes(bytes);
-      return { state: 'detected', path: activePath, summary: parsed.summary, message: null };
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') return { state: 'missing', path: activePath, summary: null, message: 'missing' };
-      if (error instanceof Error && /supported|valid JSON|UTF-8|empty|safety limit/i.test(error.message)) return { state: 'invalid', path: activePath, summary: null, message: 'invalid' };
-      return { state: 'unreadable', path: activePath, summary: null, message: 'unreadable' };
-    }
-  };
-
   const getState = async (): Promise<AppState> => {
     const settings = await getSettings();
     const activePath = resolveActivePath(settings);
-    return { settings, defaultPath: defaultSavePath(), activePath, live: await readLive(activePath), snapshots: await catalog.listSnapshots() };
+    return { settings, defaultPath: defaultSavePath(), activePath, live: await inspectLiveSave(activePath), snapshots: await catalog.listSnapshots() };
   };
 
   ipcMain.handle('app:get-state', async (event) => { assertTrustedSender(event); return getState(); });

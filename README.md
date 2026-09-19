@@ -26,7 +26,7 @@ If the file is not found, use **Choose save path**. The override is persisted in
 ### Safety model
 
 - Capture rejects symlinked or changing source files, validates UTF-8 JSON and the supported PEPPERED Easy Save 3 shape, then copies the stable original bytes exactly.
-- Transient Windows sharing locks and in-progress saves are retried with bounded backoff; a persistent lock produces a specific inline “Save.es3 is busy” message instead of a generic failure.
+- Transient Windows sharing locks and in-progress saves are retried with bounded backoff. A persistent lock is classified as busy during live-state inspection and keeps **Save current** available for a manually named retry; a failed capture shows a specific inline “Save.es3 is busy” message instead of a generic failure. Permission-denied errors remain distinct.
 - The capture dialog starts with a human-readable title from the detected scene, so **Capture checkpoint** works immediately; capture, restore, rename, and delete failures stay visible inside the open dialog.
 - Each snapshot stores a SHA-256 digest, capture time, source path, title, and a small parsed summary.
 - Restore verifies the snapshot hash, refuses an invalid target, and refuses to proceed when the Windows process check cannot establish that PEPPERED is closed.
@@ -48,6 +48,7 @@ npm run lint
 npm test
 npm run build
 npm run test:electron # production preload/IPC/renderer smoke
+npm run test:windows-save-lock # native Windows exclusive Save.es3 lock/read smoke
 npm run test:windows-helper # native Windows guarded-replace smoke
 npm audit
 npm run dist:win # Windows x64 portable EXE
@@ -58,6 +59,7 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 ### Current limitations
 
 - The product is Windows-only. The Linux host can build the portable artifact but is not the supported runtime.
+- `npm run test:windows-save-lock` requires native Windows exclusive file-sharing semantics; it is not a Linux or Wine result.
 - Restore checks running processes with `tasklist.exe`; if that check fails, restore is closed rather than guessed safe.
 - V1 restores complete captured saves only. It does not synthesize arbitrary scenes, edit progress, launch a non-Steam executable, or inspect encrypted/compressed Easy Save variants.
 - Catalog archives are bounded to 64 MiB compressed archive size, 16 MiB per save, and 48 MiB total save bytes.
@@ -85,7 +87,7 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 ### Безопасность
 
 - При копировании отклоняются симлинки и изменяющийся во время чтения источник, затем проверяются UTF-8 JSON и поддерживаемая структура Easy Save 3, а стабильные исходные байты копируются без изменений.
-- Временная Windows-блокировка файла и сохранение в процессе повторяются с ограниченным backoff; постоянная блокировка показывает точную inline-ошибку «Save.es3 занят», а не общий сбой.
+- Временные Windows-блокировки файла и сохранение в процессе повторяются с ограниченным backoff. Постоянная блокировка при проверке текущего состояния определяется как занятый файл, кнопка **Сохранить текущее** остаётся доступной для ручного названия и повторной попытки; ошибка копирования показывает точное inline-сообщение «Save.es3 занят», а отказ в доступе остаётся отдельной ошибкой.
 - Диалог копирования сразу подставляет понятное название из распознанной сцены, поэтому **Сохранить точку** работает без обязательного ручного ввода; ошибки копирования, восстановления, переименования и удаления показываются внутри открытого диалога.
 - Для каждой точки хранятся SHA-256, время, путь источника, название и краткое описание состояния.
 - Перед восстановлением проверяется хеш точки и корректность цели. На Windows действие закрывается, если нельзя подтвердить, что PEPPERED завершён.
@@ -107,6 +109,7 @@ npm run lint
 npm test
 npm run build
 npm run test:electron
+npm run test:windows-save-lock
 npm run test:windows-helper
 npm audit
 npm run dist:win
@@ -117,6 +120,7 @@ npm run dist:win
 ### Текущие ограничения
 
 - Поддерживается только Windows. Linux используется здесь для сборки, а не как целевая среда запуска.
+- `npm run test:windows-save-lock` требует нативной Windows-семантики эксклюзивных файловых блокировок; результат Linux или Wine его не заменяет.
 - Проверка процесса восстановления использует `tasklist.exe`; при ошибке проверка закрывает действие.
 - В первой версии восстанавливаются только полностью сохранённые точки. Произвольные сцены, прогресс, запуск не-Steam версии и зашифрованные варианты Easy Save не поддерживаются.
 - Для архивов действуют ограничения: 64 МиБ на архив, 16 МиБ на сохранение и 48 МиБ на все сохранения.

@@ -1,7 +1,7 @@
 import type { ImportReport, Language, SaveSummary, Settings, SnapshotMeta, UiScale } from './types';
 
 export interface LiveSaveStatus {
-  state: 'detected' | 'missing' | 'invalid' | 'unreadable';
+  state: 'detected' | 'busy' | 'permission' | 'missing' | 'invalid' | 'unreadable';
   path: string;
   summary: SaveSummary | null;
   message: string | null;

@@ -31,7 +31,18 @@ describe('Electron and renderer release boundaries', () => {
     expect(preload).toContain("ipcRenderer.invoke('app:restore-and-launch'");
     const catalog = await read('src/core/catalog.ts');
     expect(catalog).toContain('current = await readStableCaptureSource(targetPath)');
+    expect(main).toContain("import { inspectLiveSave } from '../core/live'");
+    expect(main).toContain('live: await inspectLiveSave(activePath)');
+    expect(main).not.toContain('const readLive = async');
+    expect(main).not.toContain('readFile(activePath)');
+    const live = await read('src/renderer/components/LiveSaveStrip.tsx');
+    expect(live).toContain("state.live.state === 'detected' || state.live.state === 'busy'");
+    expect(live).toContain('disabled={busy || !captureAvailable}');
     const app = await read('src/renderer/App.tsx');
+    expect(app).toContain("state.live.state !== 'detected' && state.live.state !== 'busy'");
+    expect(app).toContain('savePermissionDenied');
+    const ipc = await read('src/shared/ipc.ts');
+    expect(ipc).toContain("'busy' | 'permission'");
     expect(app).toContain('restoreFailedWithTemp');
     expect(app).toContain("result.previousState === 'absent'");
   });
@@ -49,6 +60,17 @@ describe('Electron and renderer release boundaries', () => {
     expect(css).toContain('color: var(--ink); border-color: var(--primary-fill);');
     expect(list).toContain('<li key={snapshot.id}>');
     expect(list).not.toContain('role="listitem"');
+  });
+
+  it('keeps the native Windows lock smoke on the real renderer state path', async () => {
+    const smoke = await read('scripts/windows-save-lock-smoke.mjs');
+    expect(smoke).toContain('document.querySelector("#language-select")');
+    expect(smoke).toContain('dispatchEvent(new Event("change", { bubbles: true }))');
+    expect(smoke).not.toContain('window.peppered.setSettings({ language: "ru" })');
+    expect(smoke).toContain('const state = await window.peppered.getState()');
+    expect(smoke).toContain('transientState.elapsedMs < 500');
+    expect(smoke).toContain('live-busy');
+    expect(smoke).toContain('dialog-error[role=alert]');
   });
 
   it('pins Electron and ships the icon and guarded Windows replacement helper', async () => {
