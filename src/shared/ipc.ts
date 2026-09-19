@@ -26,6 +26,10 @@ export interface RestoreResponse {
   safetySnapshotId: string | null;
 }
 
+export interface RestoreAndLaunchResponse extends RestoreResponse {
+  launchRequested: boolean;
+}
+
 export interface RendererApi {
   getState(): Promise<AppState>;
   chooseSavePath(): Promise<AppState | null>;
@@ -34,6 +38,7 @@ export interface RendererApi {
   rename(id: string, title: string): Promise<AppState>;
   delete(id: string): Promise<AppState>;
   restore(id: string): Promise<RestoreResponse>;
+  restoreAndLaunch(id: string): Promise<RestoreAndLaunchResponse>;
   exportCatalog(): Promise<{ snapshotCount: number; bytes: number }>;
   importCatalog(): Promise<ImportReport>;
 }

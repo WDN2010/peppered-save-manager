@@ -11,7 +11,7 @@ import { t, type CopyKey } from './i18n';
 type ModalState =
   | { kind: 'capture'; value: string }
   | { kind: 'rename'; value: string; id: string }
-  | { kind: 'restore'; id: string }
+  | { kind: 'restore'; id: string; launch: boolean }
   | { kind: 'delete'; id: string }
   | null;
 
@@ -110,10 +110,17 @@ export default function App() {
 
   const restore = () => void runMutation(async () => {
     if (!modal || modal.kind !== 'restore') return;
-    const result = await window.peppered.restore(modal.id);
-    setState(result.state);
-    setModal(null);
-    setStatus({ key: result.safetySnapshotId ? 'restoredStatus' : 'restoredNoBackupStatus' });
+    if (modal.launch) {
+      const result = await window.peppered.restoreAndLaunch(modal.id);
+      setState(result.state);
+      setModal(null);
+      setStatus({ key: result.launchRequested ? 'restoredAndLaunchedStatus' : 'restoredLaunchFailedStatus' });
+    } else {
+      const result = await window.peppered.restore(modal.id);
+      setState(result.state);
+      setModal(null);
+      setStatus({ key: result.safetySnapshotId ? 'restoredStatus' : 'restoredNoBackupStatus' });
+    }
   });
 
   const exportCatalog = () => void runMutation(async () => {
@@ -156,11 +163,11 @@ export default function App() {
       <LiveSaveStrip state={state} language={language} busy={busy} onChoosePath={choosePath} onCapture={() => setModal({ kind: 'capture', value: '' })} />
       <div className="workspace">
         <SnapshotList snapshots={snapshots} selectedId={selectedId} language={language} search={search} sort={sort} disabled={busy} onSearch={setSearch} onSort={setSort} onSelect={setSelectedId} />
-        <DetailPane snapshot={selected} language={language} disabled={busy} onRename={(title) => selected && setModal({ kind: 'rename', id: selected.id, value: title })} onRestore={() => selected && setModal({ kind: 'restore', id: selected.id })} onDelete={() => selected && setModal({ kind: 'delete', id: selected.id })} />
+        <DetailPane snapshot={selected} language={language} disabled={busy} onRename={(title) => selected && setModal({ kind: 'rename', id: selected.id, value: title })} onRestore={() => selected && setModal({ kind: 'restore', id: selected.id, launch: false })} onRestoreAndLaunch={() => selected && setModal({ kind: 'restore', id: selected.id, launch: true })} onDelete={() => selected && setModal({ kind: 'delete', id: selected.id })} />
       </div>
       {modal?.kind === 'capture' && <ActionModal language={language} title={t(language, 'captureTitle')} description={t(language, 'captureHint')} value={modal.value} onValue={(value) => setModal({ kind: 'capture', value })} onCancel={() => setModal(null)} onConfirm={capture} confirmLabel={t(language, 'capture')} inputLabel={t(language, 'captureTitle')} busy={busy} />}
       {modal?.kind === 'rename' && <ActionModal language={language} title={t(language, 'renameTitle')} value={modal.value} onValue={(value) => setModal({ kind: 'rename', id: modal.id, value })} onCancel={() => setModal(null)} onConfirm={rename} confirmLabel={t(language, 'saveName')} inputLabel={t(language, 'renameTitle')} busy={busy} />}
-      {modal?.kind === 'restore' && <ActionModal language={language} title={t(language, 'restoreConfirmTitle')} description={t(language, 'restoreConfirm')} value="" onValue={() => undefined} onCancel={() => setModal(null)} onConfirm={restore} confirmLabel={t(language, 'confirmRestore')} busy={busy} />}
+      {modal?.kind === 'restore' && <ActionModal language={language} title={t(language, 'restoreConfirmTitle')} description={t(language, modal.launch ? 'restoreLaunchConfirm' : 'restoreConfirm')} value="" onValue={() => undefined} onCancel={() => setModal(null)} onConfirm={restore} confirmLabel={t(language, modal.launch ? 'restoreAndLaunch' : 'confirmRestore')} busy={busy} />}
       {modal?.kind === 'delete' && <ActionModal language={language} title={t(language, 'deleteConfirmTitle')} description={t(language, 'deleteConfirm')} value="" onValue={() => undefined} onCancel={() => setModal(null)} onConfirm={remove} confirmLabel={t(language, 'confirmDelete')} destructive busy={busy} />}
     </main>
   );

@@ -138,9 +138,10 @@ try {
   await cdp.open();
   await cdp.command('Runtime.enable');
   await waitForValue(cdp, 'typeof window.peppered', 'object');
+  await waitForValue(cdp, 'typeof window.peppered.restoreAndLaunch', 'function');
   await waitForValue(cdp, 'Boolean(document.querySelector(".app-shell")) && !document.body.innerText.includes("Loading catalog")', true);
-  const state = await cdp.evaluate('({ title: document.title, lang: document.documentElement.lang, shell: Boolean(document.querySelector(".app-shell")) })');
-  console.log(`ELECTRON_SMOKE_PASS bridge=object shell=true title=${state.title} lang=${state.lang}`);
+  const state = await cdp.evaluate('({ title: document.title, lang: document.documentElement.lang, shell: Boolean(document.querySelector(".app-shell")), launch: typeof window.peppered.restoreAndLaunch === "function" })');
+  console.log(`ELECTRON_SMOKE_PASS bridge=object shell=true launch=${state.launch} title=${state.title} lang=${state.lang}`);
 } catch (error) {
   failure = error;
   console.error(`ELECTRON_SMOKE_FAIL ${error instanceof Error ? error.message : String(error)}`);

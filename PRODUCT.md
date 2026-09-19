@@ -29,7 +29,7 @@ Focused, trustworthy, quietly game-aware. The application should feel like a pur
 ## Design Principles
 
 1. Name the place, not the data. Show a short checkpoint description first and technical identifiers only as secondary detail.
-2. Protect the active save. Every restore creates a recovery snapshot and uses an atomic replacement path.
+2. Protect the active save. Every restore preserves a different current save as a recovery snapshot and uses an atomic replacement path.
 3. Keep practice flow short. Capture, select, restore, and launch are the central actions.
 4. Make state visible. Clearly distinguish the live game save, named snapshots, missing paths, import results, and errors.
 5. Treat Russian and English as equal product surfaces, not a translated afterthought.

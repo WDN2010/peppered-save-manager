@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -6,12 +6,14 @@ import { pathToFileURL } from 'node:url';
 import { CatalogRepository, isValidSaveTarget, isValidSnapshotId } from '../core/catalog';
 import { ImportRejectedError } from '../core/archive';
 import { MAX_SAVE_BYTES, parseSaveBytes } from '../core/es3';
-import type { AppState, CaptureResponse, LiveSaveStatus, RestoreResponse } from '../shared/ipc';
+import { sameFilesystemPath } from '../core/validation';
+import type { AppState, CaptureResponse, LiveSaveStatus, RestoreAndLaunchResponse, RestoreResponse } from '../shared/ipc';
 import type { Language, Settings, UiScale } from '../shared/types';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_RELATIVE_SAVE = path.join('AppData', 'LocalLow', 'Mostly Games', 'PEPPERED', 'Save.es3');
+const PEPPERED_STEAM_URI = 'steam://rungameid/1883370';
 const MAX_TITLE = 160;
 const DIALOG_COPY = {
   en: {
@@ -91,8 +93,12 @@ export function registerIpc(catalog: CatalogRepository): void {
 
   const readLive = async (activePath: string): Promise<LiveSaveStatus> => {
     try {
-      const info = await stat(activePath);
-      if (!info.isFile() || info.size > MAX_SAVE_BYTES) return { state: 'invalid', path: activePath, summary: null, message: 'invalid' };
+      const parent = path.dirname(path.resolve(activePath));
+      const parentInfo = await lstat(parent);
+      const info = await lstat(activePath);
+      if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink() || !sameFilesystemPath(await realpath(parent), parent) || !info.isFile() || info.isSymbolicLink() || info.size > MAX_SAVE_BYTES) {
+        return { state: 'invalid', path: activePath, summary: null, message: 'invalid' };
+      }
       const bytes = await readFile(activePath);
       const parsed = parseSaveBytes(bytes);
       return { state: 'detected', path: activePath, summary: parsed.summary, message: null };
@@ -160,14 +166,29 @@ export function registerIpc(catalog: CatalogRepository): void {
     await catalog.delete(input.id);
     return getState();
   });
+  const restoreCheckpoint = async (id: string): Promise<RestoreResponse> => {
+    if (await gameIsRunning()) throw new Error('Close PEPPERED before restoring a checkpoint.');
+    const settings = await getSettings();
+    const result = await catalog.restore(id, resolveActivePath(settings));
+    return { state: await getState(), safetySnapshotId: result.safetySnapshotId };
+  };
   ipcMain.handle('app:restore', async (event, input: unknown): Promise<RestoreResponse> => {
     assertTrustedSender(event);
     assertObject(input, 'restore');
     assertId(input.id);
-    if (await gameIsRunning()) throw new Error('Close PEPPERED before restoring a checkpoint.');
-    const settings = await getSettings();
-    const result = await catalog.restore(input.id, resolveActivePath(settings));
-    return { state: await getState(), safetySnapshotId: result.safetySnapshotId };
+    return restoreCheckpoint(input.id);
+  });
+  ipcMain.handle('app:restore-and-launch', async (event, input: unknown): Promise<RestoreAndLaunchResponse> => {
+    assertTrustedSender(event);
+    assertObject(input, 'restore and launch');
+    assertId(input.id);
+    const restored = await restoreCheckpoint(input.id);
+    try {
+      await shell.openExternal(PEPPERED_STEAM_URI, { activate: true });
+      return { ...restored, launchRequested: true };
+    } catch {
+      return { ...restored, launchRequested: false };
+    }
   });
   ipcMain.handle('app:export', async (event) => {
     assertTrustedSender(event);

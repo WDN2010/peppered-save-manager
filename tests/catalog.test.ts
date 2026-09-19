@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { replaceAtomically } from '../src/core/atomic';
 import { CatalogRepository } from '../src/core/catalog';
-import type { SnapshotFile } from '../src/shared/types';
+import type { Settings, SnapshotFile } from '../src/shared/types';
 
 const fixturePath = path.resolve('tests/fixtures/sample-save.es3');
 const fixtureBPath = path.resolve('tests/fixtures/sample-save-b.es3');
@@ -187,6 +187,34 @@ describe('catalog capture and restore safety', () => {
     expect(await catalog.listSnapshots()).toEqual([]);
     await writeFile(path.join(root, 'settings.json'), JSON.stringify({ version: 1, language: 'en', scale: 100, savePath: path.join(root, 'not-save.json') }));
     expect((await catalog.getSettings()).savePath).toBeNull();
+  });
+
+  it('serializes settings repair with concurrent user updates', async () => {
+    const { root, catalog } = await makeCatalog();
+    await catalog.initialize();
+    await writeFile(path.join(root, 'settings.json'), JSON.stringify({ language: 'en', version: 1, savePath: null, scale: 100 }));
+    const repository = catalog as unknown as { writeSettings: (settings: Settings) => Promise<void> };
+    const originalWrite = repository.writeSettings.bind(catalog);
+    let releaseRepair!: () => void;
+    let signalRepair!: () => void;
+    const repairEntered = new Promise<void>((resolve) => { signalRepair = resolve; });
+    const repairReleased = new Promise<void>((resolve) => { releaseRepair = resolve; });
+    let heldRepair = false;
+    repository.writeSettings = async (settings) => {
+      if (!heldRepair && settings.language === 'en') {
+        heldRepair = true;
+        signalRepair();
+        await repairReleased;
+      }
+      await originalWrite(settings);
+    };
+    const repair = catalog.getSettings();
+    await repairEntered;
+    const update = catalog.updateSettings({ language: 'ru', scale: 130 });
+    releaseRepair();
+    await Promise.all([repair, update]);
+    const persisted = JSON.parse(await readFile(path.join(root, 'settings.json'), 'utf8')) as Settings;
+    expect(persisted).toMatchObject({ language: 'ru', scale: 130 });
   });
 
   it('rolls back every newly-added snapshot when a batch commit fails', async () => {

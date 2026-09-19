@@ -25,6 +25,10 @@ describe('Electron and renderer release boundaries', () => {
     expect(main).toContain("else await mainWindow.loadFile");
     expect(main).toContain("Menu.setApplicationMenu(null)");
     expect(main).toContain('app.requestSingleInstanceLock()');
+    expect(main).toContain("const PEPPERED_STEAM_URI = 'steam://rungameid/1883370'");
+    expect(main).toContain("ipcMain.handle('app:restore-and-launch'");
+    const preload = await read('src/preload/index.ts');
+    expect(preload).toContain("ipcRenderer.invoke('app:restore-and-launch'");
   });
 
   it('uses a strict CSP, localized document language, scale-aware text, and semantic list buttons', async () => {

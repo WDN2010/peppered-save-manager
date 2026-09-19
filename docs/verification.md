@@ -1,13 +1,13 @@
 # Verification receipt
 
-Verified on `2026-09-19T15:35:39+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-19T15:55:25+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
-- `npm test` — PASS: 4 test files, 25 tests.
+- `npm test` — PASS: 4 test files, 27 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
-- `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true title=PEPPERED Save Manager lang=ru`.
+- `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true title=PEPPERED Save Manager lang=ru`.
   - The smoke test builds the production bundles, launches Electron 44.4.1 with an isolated home and user-data directory under Xvfb, connects over CDP, verifies the sandboxed CommonJS preload exposed `window.peppered`, and waits for the real app shell.
 - `npm audit` — PASS: 0 vulnerabilities.
 - `npm run dist:win` — PASS: Windows x64 portable target built with Electron 44.4.1 and electron-builder 26.15.3.
@@ -16,8 +16,8 @@ Verified on `2026-09-19T15:35:39+03:00` from `/home/wdn2010/peppered-save-manage
 ## Artifact
 
 - Path: `release/PEPPERED-Save-Manager-1.0.0-portable.exe`
-- Size: `99,880,933` bytes
-- SHA-256: `0bafc629df7145eb2febe743bfe1bcc07bd6fc8026e96d6db6de34a27a8795bd`
+- Size: `99,882,088` bytes
+- SHA-256: `9b66b0df3a689b2727e086715235b41b8d02b2274b115115c07606903b7c069a`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
 - Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d7af8721353c026f341bb9eb9737ad9732d7a2604c56641b33d8dd3848b32660`.
@@ -37,8 +37,9 @@ Regression tests cover:
 - changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
 - symlink target and parent rejection;
 - corrupt local metadata quarantine;
-- path traversal, uppercase UUID/hash canonicalization, pre-decompression total-size rejection, mixed valid/invalid all-or-nothing import, and rollback after injected commit failure;
-- sandbox-compatible preload output, CSP/navigation/IPC boundaries, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
+- path traversal, unreferenced ZIP entry rejection, uppercase UUID/hash canonicalization, pre-decompression total-size rejection, mixed valid/invalid all-or-nothing import, and rollback after injected commit failure;
+- serialized settings repair versus concurrent updates;
+- sandbox-compatible preload output, CSP/navigation/IPC boundaries, the fixed Steam launch bridge, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
 
 The C# source embedded in the PowerShell helper was also extracted and compiled successfully with Mono `mcs` as a syntax/type probe. Native Win32 calls themselves remain part of the native-Windows runtime gate below.
 
@@ -48,7 +49,7 @@ Screenshots were inspected for:
 
 - Russian empty state at 1120×720 / 100%;
 - 130% scale at 1120×720;
-- responsive 860×560 minimum window at 130% after layout reflow;
+- responsive 860×560 minimum window at 130% with a single page scroll and no nested detail scrollbar;
 - populated checkpoint detail view with the name `A_7 — перед лифтом`.
 
 The final layouts kept all controls reachable, switched to a vertically scrollable single-column layout at minimum width, preserved visible focus/selection hierarchy, and showed localized labels and human-readable checkpoint data. Primary button fill was darkened after contrast calculation so normal-size near-white text exceeds the 4.5:1 target.

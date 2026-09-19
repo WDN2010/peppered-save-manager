@@ -9,6 +9,7 @@ const api: RendererApi = {
   rename: (id, title) => ipcRenderer.invoke('app:rename', { id, title }),
   delete: (id) => ipcRenderer.invoke('app:delete', { id }),
   restore: (id) => ipcRenderer.invoke('app:restore', { id }),
+  restoreAndLaunch: (id) => ipcRenderer.invoke('app:restore-and-launch', { id }),
   exportCatalog: () => ipcRenderer.invoke('app:export'),
   importCatalog: () => ipcRenderer.invoke('app:import'),
 };

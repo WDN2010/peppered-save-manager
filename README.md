@@ -21,6 +21,8 @@ The default active save path is:
 
 If the file is not found, use **Choose save path**. The override is persisted in the app catalog under Electron's `userData` directory. Only a file named `Save.es3` can be selected as the active target.
 
+**Restore + launch** performs the same confirmed safe restore, then asks Steam to launch PEPPERED through its fixed App ID `1883370`. Plain **Restore checkpoint** never launches another process.
+
 ### Safety model
 
 - Capture rejects symlinked or changing source files, validates UTF-8 JSON and the supported PEPPERED Easy Save 3 shape, then copies the stable original bytes exactly.
@@ -54,7 +56,7 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 
 - The product is Windows-only. The Linux host can build the portable artifact but is not the supported runtime.
 - Restore checks running processes with `tasklist.exe`; if that check fails, restore is closed rather than guessed safe.
-- V1 restores complete captured saves only. It does not synthesize arbitrary scenes, edit progress, launch the game, or inspect encrypted/compressed Easy Save variants.
+- V1 restores complete captured saves only. It does not synthesize arbitrary scenes, edit progress, launch a non-Steam executable, or inspect encrypted/compressed Easy Save variants.
 - Catalog archives are bounded to 64 MiB compressed archive size, 16 MiB per save, and 48 MiB total save bytes.
 
 ## Русский
@@ -74,6 +76,8 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 `%USERPROFILE%\\AppData\\LocalLow\\Mostly Games\\PEPPERED\\Save.es3`
 
 Если файл не найден, нажмите **Выбрать путь**. Переопределение сохраняется в каталоге приложения Electron. В качестве активной цели принимается только файл с именем `Save.es3`.
+
+**Восстановить + запустить** выполняет то же подтверждённое безопасное восстановление, а затем просит Steam запустить PEPPERED по фиксированному App ID `1883370`. Обычная кнопка **Восстановить точку** ничего не запускает.
 
 ### Безопасность
 
@@ -108,5 +112,5 @@ npm run dist:win
 
 - Поддерживается только Windows. Linux используется здесь для сборки, а не как целевая среда запуска.
 - Проверка процесса восстановления использует `tasklist.exe`; при ошибке проверка закрывает действие.
-- В первой версии восстанавливаются только полностью сохранённые точки. Произвольные сцены, прогресс, запуск игры и зашифрованные варианты Easy Save не редактируются.
+- В первой версии восстанавливаются только полностью сохранённые точки. Произвольные сцены, прогресс, запуск не-Steam версии и зашифрованные варианты Easy Save не поддерживаются.
 - Для архивов действуют ограничения: 64 МиБ на архив, 16 МиБ на сохранение и 48 МиБ на все сохранения.

@@ -94,6 +94,20 @@ describe('catalog export and import', () => {
     expect(imported.sha256).toBe(imported.sha256.toLowerCase());
   });
 
+  it('rejects every unreferenced non-directory ZIP entry', async () => {
+    const destination = await makeCatalog('unreferenced');
+    const zip = new JSZip();
+    zip.file('settings.json', JSON.stringify({ version: 1, language: 'en', scale: 100 }));
+    zip.file('manifest.json', JSON.stringify({
+      format: 'peppered-saves', version: 1, createdAt: new Date().toISOString(), settingsPath: 'settings.json', snapshots: [],
+    }));
+    zip.file('snapshots/11111111-1111-4111-8111-111111111111/save.es3', await readFile(fixturePath));
+    const archivePath = path.join(destination.root, 'unreferenced.peppered-saves');
+    await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }));
+    await expect(destination.catalog.importCatalog(archivePath)).rejects.toThrow(/unreferenced|missing files/i);
+    expect(await destination.catalog.listSnapshots()).toEqual([]);
+  });
+
   it('pre-sums manifest save bytes before decompression and rejects zip-bomb declarations', async () => {
     const destination = await makeCatalog('bomb');
     const zip = new JSZip();

@@ -90,19 +90,27 @@ export class CatalogRepository {
     this.initialLanguage = options.defaultLanguage ?? 'en';
   }
 
-  async initialize(): Promise<void> {
+  private async ensureDirectories(): Promise<void> {
     await mkdir(this.rootPath, { recursive: true });
     if (await pathExists(this.snapshotsPath)) await assertDirectory(this.snapshotsPath, 'Snapshots path');
     else await mkdir(this.snapshotsPath);
+  }
+
+  private async initializeInternal(): Promise<void> {
+    await this.ensureDirectories();
     if (!(await pathExists(this.settingsPath))) await this.writeSettings({ ...DEFAULT_SETTINGS, language: this.initialLanguage });
+  }
+
+  async initialize(): Promise<void> {
+    return this.mutations.run(() => this.initializeInternal());
   }
 
   private async writeSettings(settings: Settings): Promise<void> {
     await atomicWriteFile(this.settingsPath, Buffer.from(JSON.stringify(settings, null, 2), 'utf8'));
   }
 
-  async getSettings(): Promise<Settings> {
-    await this.initialize();
+  private async getSettingsInternal(): Promise<Settings> {
+    await this.initializeInternal();
     try {
       const raw = JSON.parse(await readFile(this.settingsPath, 'utf8')) as unknown;
       const settings = validateSettings(raw, this.initialLanguage);
@@ -115,9 +123,13 @@ export class CatalogRepository {
     }
   }
 
+  async getSettings(): Promise<Settings> {
+    return this.mutations.run(() => this.getSettingsInternal());
+  }
+
   async updateSettings(patch: Partial<Pick<Settings, 'language' | 'scale' | 'savePath'>>): Promise<Settings> {
     return this.mutations.run(async () => {
-      const current = await this.getSettings();
+      const current = await this.getSettingsInternal();
       const next = validateSettings({ ...current, ...patch }, this.initialLanguage);
       await this.writeSettings(next);
       return next;
@@ -142,7 +154,7 @@ export class CatalogRepository {
   }
 
   async listSnapshots(): Promise<SnapshotMeta[]> {
-    await this.initialize();
+    await this.ensureDirectories();
     const entries = await readdir(this.snapshotsPath, { withFileTypes: true });
     const snapshots: SnapshotMeta[] = [];
     for (const entry of entries) {
@@ -189,7 +201,7 @@ export class CatalogRepository {
   }
 
   private async commitImportedSnapshotsInternal(snapshots: SnapshotFile[], importedSettings?: Pick<Settings, 'language' | 'scale'>): Promise<void> {
-    const previousSettings = await this.getSettings();
+    const previousSettings = await this.getSettingsInternal();
     const normalized = snapshots.map((snapshot) => ({
       meta: validateSnapshotMeta(snapshot.meta, snapshot.meta.id),
       bytes: snapshot.bytes,
@@ -322,14 +334,19 @@ export class CatalogRepository {
   }
 
   async exportCatalog(outputPath: string): Promise<{ snapshotCount: number; bytes: number }> {
-    return this.mutations.run(() => exportCatalog(this, outputPath));
+    return this.mutations.run(() => exportCatalog({
+      listSnapshots: () => this.listSnapshots(),
+      getSnapshot: (id) => this.getSnapshot(id),
+      getSettings: () => this.getSettingsInternal(),
+      commitImportedSnapshots: (snapshots, importedSettings) => this.commitImportedSnapshotsInternal(snapshots, importedSettings),
+    }, outputPath));
   }
 
   async importCatalog(archivePath: string): Promise<ImportReport> {
     return this.mutations.run(() => importCatalog({
       listSnapshots: () => this.listSnapshots(),
       getSnapshot: (id) => this.getSnapshot(id),
-      getSettings: () => this.getSettings(),
+      getSettings: () => this.getSettingsInternal(),
       commitImportedSnapshots: (snapshots, importedSettings) => this.commitImportedSnapshotsInternal(snapshots, importedSettings),
     }, archivePath));
   }

@@ -146,6 +146,19 @@ export async function importCatalog(catalog: ArchiveCatalog, archivePath: string
   try { manifestValue = JSON.parse(decodeUtf8(manifestBytes, 'Catalog manifest')) as unknown; }
   catch (error) { if (error instanceof ImportRejectedError) throw error; throw new ImportRejectedError('Catalog manifest is not valid JSON'); }
   const manifest = validateManifest(manifestValue);
+  const expectedFiles = new Set<string>(['manifest.json', manifest.settingsPath]);
+  for (const snapshot of manifest.snapshots) {
+    expectedFiles.add(snapshot.savePath);
+    expectedFiles.add(snapshot.metaPath);
+  }
+  const actualFiles = Object.entries(zip.files)
+    .filter(([, entry]) => !entry.dir)
+    .map(([name]) => name);
+  const unexpectedFiles = actualFiles.filter((name) => !expectedFiles.has(name));
+  const missingFiles = [...expectedFiles].filter((name) => !zip.file(name));
+  if (unexpectedFiles.length > 0 || missingFiles.length > 0 || actualFiles.length !== expectedFiles.size) {
+    throw new ImportRejectedError('Catalog archive contains unreferenced, duplicate, or missing files');
+  }
   const settingsBytes = await readZipEntry(zip, manifest.settingsPath, MAX_META_BYTES);
   let importedSettings: Pick<Settings, 'language' | 'scale'>;
   try {

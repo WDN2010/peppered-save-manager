@@ -8,6 +8,7 @@ interface DetailPaneProps {
   disabled: boolean;
   onRename: (title: string) => void;
   onRestore: () => void;
+  onRestoreAndLaunch: () => void;
   onDelete: () => void;
 }
 
@@ -21,7 +22,7 @@ function formatMap(value: Record<string, number> | null): string {
   return Object.entries(value).map(([key, entry]) => `${key}: ${entry}`).join(' · ');
 }
 
-export function DetailPane({ snapshot, language, disabled, onRename, onRestore, onDelete }: DetailPaneProps) {
+export function DetailPane({ snapshot, language, disabled, onRename, onRestore, onRestoreAndLaunch, onDelete }: DetailPaneProps) {
   const [technical, setTechnical] = useState(false);
   if (!snapshot) return <section className="detail-panel detail-empty" aria-live="polite"><span className="empty-mark" aria-hidden="true">↗</span><strong>{t(language, 'noSelection')}</strong></section>;
   const description = snapshot.summary.description[language];
@@ -37,6 +38,7 @@ export function DetailPane({ snapshot, language, disabled, onRename, onRestore, 
         </div>
         <div className="detail-actions">
           <button type="button" className="button button-primary" onClick={onRestore} disabled={disabled}>{t(language, 'restore')}</button>
+          <button type="button" className="button button-quiet" onClick={onRestoreAndLaunch} disabled={disabled}>{t(language, 'restoreAndLaunch')}</button>
           <button type="button" className="button button-quiet" onClick={() => onRename(title)} disabled={disabled}>{t(language, 'rename')}</button>
           <button type="button" className="button button-danger" onClick={onDelete} disabled={disabled}>{t(language, 'delete')}</button>
         </div>
