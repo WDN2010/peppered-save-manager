@@ -29,7 +29,7 @@ If the file is not found, use **Choose save path**. The override is persisted in
 - Each snapshot stores a SHA-256 digest, capture time, source path, title, and a small parsed summary.
 - Restore verifies the snapshot hash, refuses an invalid target, and refuses to proceed when the Windows process check cannot establish that PEPPERED is closed.
 - Before replacement, a different current save always becomes a distinct automatic **Recovery copy** in the catalog, even when the same bytes also exist as a manual snapshot. Recovery labels are localized in the UI; renaming one makes it manual.
-- Replacement writes a sibling temporary file, flushes it with `fsync`, and closes it. On Windows a packaged PowerShell/C# helper opens and locks the parent, active save, and replacement; verifies the exact recovery-time and replacement SHA-256 values while the no-write locks are held; and commits an existing target with one `ReplaceFileW` call. When no target existed, it uses non-overwriting `MoveFileExW` and fails if a file appears concurrently. If another process already has a writable handle or changes the bytes, restore fails closed instead of overwriting that state. The implementation never moves the live file aside. Sharing violations use bounded exponential retry; a failed replacement preserves the complete temporary recovery file and reports its path.
+- Replacement writes a sibling temporary file, flushes it with `fsync`, and closes it. On Windows a packaged PowerShell/C# helper opens and byte-locks the active save and replacement without write sharing, verifies their exact SHA-256 values, then closes those handles because `ReplaceFileW` requires exclusive reopen. The existing target is replaced with a randomized same-directory backup in one `ReplaceFileW` operation; both committed and backup hashes are immediately verified. A mismatch is rolled back with the selected bytes restored to the temporary path. An absent target uses non-overwriting `MoveFileExW`, so a concurrently appeared file fails closed. The implementation never creates a target-name gap. Sharing violations use bounded exponential retry; failed or rolled-back replacement preserves recovery evidence and reports its path.
 - The renderer has no Node.js access. Electron 44.4.1 uses context isolation, a sandboxed CommonJS preload, `nodeIntegration: false`, strict CSP, loopback-only development loading, trusted-frame IPC checks, navigation blocking, and denied popups.
 
 ### Export and import
@@ -46,6 +46,7 @@ npm run lint
 npm test
 npm run build
 npm run test:electron # production preload/IPC/renderer smoke
+npm run test:windows-helper # native Windows guarded-replace smoke
 npm audit
 npm run dist:win # Windows x64 portable EXE
 ```
@@ -85,7 +86,7 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 - Для каждой точки хранятся SHA-256, время, путь источника, название и краткое описание состояния.
 - Перед восстановлением проверяется хеш точки и корректность цели. На Windows действие закрывается, если нельзя подтвердить, что PEPPERED завершён.
 - Отличающееся текущее сохранение всегда попадает в отдельную автоматическую **копию для восстановления**, даже если такие байты уже есть в обычной точке. Название копии локализуется в интерфейсе; переименование делает её обычной точкой.
-- Запись выполняется через временный файл рядом с целью: `fsync` и закрытие. В Windows упакованный PowerShell/C# helper блокирует родительскую папку, активный save и замену от записи, под блокировкой сверяет точные SHA-256 текущего и нового файла и заменяет существующую цель одним вызовом `ReplaceFileW`. Если цели не было, используется `MoveFileExW` без перезаписи — внезапно появившийся файл приводит к отказу. Если другой процесс уже держит writable handle или изменил байты, восстановление завершается без перезаписи. Живой файл никогда не переносится в сторону; sharing violation повторяется с ограниченным backoff, а при ошибке полный временный файл сохраняется и его путь сообщается.
+- Запись выполняется через временный файл рядом с целью: `fsync` и закрытие. В Windows упакованный PowerShell/C# helper открывает активный save и замену без write sharing, byte-lock'ом защищает точную проверку SHA-256, затем закрывает handles, потому что `ReplaceFileW` требует exclusive reopen. Существующая цель заменяется с randomized backup одним `ReplaceFileW`; сразу проверяются хеши результата и backup. При несовпадении выполняется rollback, а выбранные байты возвращаются во временный путь. Для отсутствующей цели используется `MoveFileExW` без перезаписи, поэтому внезапно появившийся файл приводит к отказу. Gap в имени цели не создаётся; sharing violation повторяется с ограниченным backoff, а при ошибке сохраняются recovery evidence и их путь сообщается.
 - Renderer не имеет доступа к Node.js: Electron 44.4.1 использует context isolation, sandboxed CommonJS preload, `nodeIntegration: false`, строгий CSP, загрузку разработки только с loopback, проверку доверенного IPC-кадра, блокировку навигации и запрет popup.
 
 ### Экспорт и импорт
@@ -102,6 +103,7 @@ npm run lint
 npm test
 npm run build
 npm run test:electron
+npm run test:windows-helper
 npm audit
 npm run dist:win
 ```

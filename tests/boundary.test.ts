@@ -64,8 +64,11 @@ describe('Electron and renderer release boundaries', () => {
     expect(icon.subarray(0, 6)).toEqual(Buffer.from([0, 0, 1, 0, 4, 0]));
     const helper = await read('resources/replace-save.ps1');
     expect(helper).toContain('LockFileEx');
+    expect(helper).toContain('UnlockFileEx');
     expect(helper).toContain('ReplaceFileW');
     expect(helper).toContain('MoveFileExW');
+    expect(helper).toContain('TARGET_CHANGED_DURING_RESTORE');
+    expect(helper).toContain('ROLLBACK_FAILED_WIN32_');
     expect(helper).toContain('TARGET_CHANGED');
     expect(helper).not.toContain('GetDirectoryName(target).TrimEnd');
   });

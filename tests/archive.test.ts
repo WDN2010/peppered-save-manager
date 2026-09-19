@@ -14,6 +14,31 @@ async function makeCatalog(prefix: string) {
   return { root, catalog: new CatalogRepository(root) };
 }
 
+function appendDuplicateCentralRecord(archive: Buffer, entryName: string): Buffer {
+  const endSignature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const centralSignature = 0x02014b50;
+  const endOffset = archive.lastIndexOf(endSignature);
+  if (endOffset < 0) throw new Error('Fixture ZIP has no end record');
+  const directoryOffset = archive.readUInt32LE(endOffset + 16);
+  const directoryBytes = archive.readUInt32LE(endOffset + 12);
+  const entryCount = archive.readUInt16LE(endOffset + 10);
+  let offset = directoryOffset;
+  let duplicate: Buffer | null = null;
+  while (offset < directoryOffset + directoryBytes) {
+    if (archive.readUInt32LE(offset) !== centralSignature) throw new Error('Fixture ZIP central directory is malformed');
+    const nameBytes = archive.readUInt16LE(offset + 28);
+    const recordBytes = 46 + nameBytes + archive.readUInt16LE(offset + 30) + archive.readUInt16LE(offset + 32);
+    if (archive.subarray(offset + 46, offset + 46 + nameBytes).toString('utf8') === entryName) duplicate = Buffer.from(archive.subarray(offset, offset + recordBytes));
+    offset += recordBytes;
+  }
+  if (!duplicate) throw new Error(`Fixture ZIP has no ${entryName}`);
+  const end = Buffer.from(archive.subarray(endOffset));
+  end.writeUInt16LE(entryCount + 1, 8);
+  end.writeUInt16LE(entryCount + 1, 10);
+  end.writeUInt32LE(directoryBytes + duplicate.length, 12);
+  return Buffer.concat([archive.subarray(0, endOffset), duplicate, end]);
+}
+
 describe('catalog export and import', () => {
   it('round trips exact save bytes, metadata, and display settings through a merge archive', async () => {
     const source = await makeCatalog('source');
@@ -104,7 +129,27 @@ describe('catalog export and import', () => {
     zip.file('snapshots/11111111-1111-4111-8111-111111111111/save.es3', await readFile(fixturePath));
     const archivePath = path.join(destination.root, 'unreferenced.peppered-saves');
     await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }));
-    await expect(destination.catalog.importCatalog(archivePath)).rejects.toThrow(/unreferenced|missing files/i);
+    await expect(destination.catalog.importCatalog(archivePath)).rejects.toThrow(/unreferenced|missing entries/i);
+    expect(await destination.catalog.listSnapshots()).toEqual([]);
+  });
+
+  it('rejects duplicate raw ZIP records and unreferenced empty directories', async () => {
+    const destination = await makeCatalog('duplicate-raw');
+    const zip = new JSZip();
+    zip.file('settings.json', JSON.stringify({ version: 1, language: 'en', scale: 100 }));
+    zip.file('manifest.json', JSON.stringify({
+      format: 'peppered-saves', version: 1, createdAt: new Date().toISOString(), settingsPath: 'settings.json', snapshots: [],
+    }));
+    const canonical = await zip.generateAsync({ type: 'nodebuffer' });
+    const duplicatePath = path.join(destination.root, 'duplicate.peppered-saves');
+    await writeFile(duplicatePath, appendDuplicateCentralRecord(canonical, 'settings.json'));
+    await expect(destination.catalog.importCatalog(duplicatePath)).rejects.toThrow(/duplicate ZIP entries/i);
+
+    const emptyDirectoryZip = await JSZip.loadAsync(canonical);
+    emptyDirectoryZip.folder('snapshots/11111111-1111-4111-8111-111111111111');
+    const directoryPath = path.join(destination.root, 'empty-directory.peppered-saves');
+    await writeFile(directoryPath, await emptyDirectoryZip.generateAsync({ type: 'nodebuffer' }));
+    await expect(destination.catalog.importCatalog(directoryPath)).rejects.toThrow(/unreferenced|missing entries/i);
     expect(await destination.catalog.listSnapshots()).toEqual([]);
   });
 

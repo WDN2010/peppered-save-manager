@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:electron": "npm run build && node scripts/electron-smoke.mjs",
+    "test:windows-helper": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-replace-smoke.ps1",
     "dist:win": "npm run build && electron-builder --win portable --x64",
     "preview": "electron-vite preview"
   },

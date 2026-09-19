@@ -49,6 +49,55 @@ export class ImportRejectedError extends Error {
 
 export class ImportLimitError extends ImportRejectedError {}
 
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+const ZIP_END_SIGNATURE = 0x06054b50;
+const ZIP_END_BYTES = 22;
+const ZIP_MAX_COMMENT_BYTES = 0xffff;
+
+function readCentralDirectoryEntryNames(archive: Buffer): string[] {
+  let endOffset = -1;
+  const minimumOffset = Math.max(0, archive.length - ZIP_END_BYTES - ZIP_MAX_COMMENT_BYTES);
+  for (let offset = archive.length - ZIP_END_BYTES; offset >= minimumOffset; offset -= 1) {
+    if (archive.readUInt32LE(offset) === ZIP_END_SIGNATURE
+      && offset + ZIP_END_BYTES + archive.readUInt16LE(offset + 20) === archive.length) {
+      endOffset = offset;
+      break;
+    }
+  }
+  if (endOffset < 0) throw new ImportRejectedError('Catalog archive has no canonical ZIP directory');
+  const disk = archive.readUInt16LE(endOffset + 4);
+  const directoryDisk = archive.readUInt16LE(endOffset + 6);
+  const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
+  const entryCount = archive.readUInt16LE(endOffset + 10);
+  const directoryBytes = archive.readUInt32LE(endOffset + 12);
+  const directoryOffset = archive.readUInt32LE(endOffset + 16);
+  if (disk !== 0 || directoryDisk !== 0 || entriesOnDisk !== entryCount
+    || entryCount === 0xffff || directoryBytes === 0xffffffff || directoryOffset === 0xffffffff) {
+    throw new ImportRejectedError('Catalog archive uses unsupported multi-disk or ZIP64 metadata');
+  }
+  const directoryEnd = directoryOffset + directoryBytes;
+  if (directoryEnd !== endOffset || directoryEnd > archive.length) throw new ImportRejectedError('Catalog archive ZIP directory is inconsistent');
+
+  const names: string[] = [];
+  let offset = directoryOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > directoryEnd || archive.readUInt32LE(offset) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new ImportRejectedError('Catalog archive ZIP directory is malformed');
+    }
+    const nameBytes = archive.readUInt16LE(offset + 28);
+    const extraBytes = archive.readUInt16LE(offset + 30);
+    const commentBytes = archive.readUInt16LE(offset + 32);
+    const recordBytes = 46 + nameBytes + extraBytes + commentBytes;
+    if (nameBytes < 1 || offset + recordBytes > directoryEnd) throw new ImportRejectedError('Catalog archive ZIP entry is malformed');
+    const rawName = archive.subarray(offset + 46, offset + 46 + nameBytes);
+    if ([...rawName].some((byte) => byte < 0x20 || byte > 0x7e)) throw new ImportRejectedError('Catalog archive entry names must be canonical ASCII');
+    names.push(rawName.toString('ascii'));
+    offset += recordBytes;
+  }
+  if (offset !== directoryEnd || new Set(names).size !== names.length) throw new ImportRejectedError('Catalog archive contains duplicate ZIP entries');
+  return names;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -130,34 +179,38 @@ export async function exportCatalog(catalog: ArchiveCatalog, outputPath: string)
 export async function importCatalog(catalog: ArchiveCatalog, archivePath: string): Promise<ImportReport> {
   const archive = await readFile(archivePath);
   if (archive.length > MAX_ARCHIVE_BYTES) throw new ImportRejectedError('Catalog archive exceeds the safety limit');
+  const centralEntryNames = readCentralDirectoryEntryNames(archive);
+  if (centralEntryNames.length > MAX_ENTRIES * 3 + 3) throw new ImportRejectedError('Catalog archive has too many entries');
   let zip: JSZip;
   try { zip = await JSZip.loadAsync(archive, { checkCRC32: true, createFolders: false }); }
   catch { throw new ImportRejectedError('Catalog archive is not a readable ZIP archive'); }
   const entries = Object.values(zip.files);
-  if (entries.length > MAX_ENTRIES * 3 + 3) throw new ImportRejectedError('Catalog archive has too many entries');
   for (const [name, entry] of Object.entries(zip.files)) {
     const originalName = (entry as JSZip.JSZipObject & { unsafeOriginalName?: string }).unsafeOriginalName ?? name;
     assertSafeArchivePath(originalName, 'archive entry');
     if (entry.dir && (name === 'snapshots/' || /^snapshots\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/$/i.test(name))) continue;
     if (name !== 'manifest.json' && name !== 'settings.json' && !/^snapshots\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(save\.es3|meta\.json)$/i.test(name)) throw new ImportRejectedError(`Unexpected archive entry ${name}`);
   }
+  if (entries.length !== centralEntryNames.length || !centralEntryNames.every((name) => Object.hasOwn(zip.files, name))) {
+    throw new ImportRejectedError('Catalog archive ZIP entries are ambiguous');
+  }
   const manifestBytes = await readZipEntry(zip, 'manifest.json', MAX_META_BYTES);
   let manifestValue: unknown;
   try { manifestValue = JSON.parse(decodeUtf8(manifestBytes, 'Catalog manifest')) as unknown; }
   catch (error) { if (error instanceof ImportRejectedError) throw error; throw new ImportRejectedError('Catalog manifest is not valid JSON'); }
   const manifest = validateManifest(manifestValue);
-  const expectedFiles = new Set<string>(['manifest.json', manifest.settingsPath]);
+  const expectedEntries = new Set<string>(['manifest.json', manifest.settingsPath]);
   for (const snapshot of manifest.snapshots) {
-    expectedFiles.add(snapshot.savePath);
-    expectedFiles.add(snapshot.metaPath);
+    expectedEntries.add('snapshots/');
+    expectedEntries.add(`snapshots/${snapshot.id}/`);
+    expectedEntries.add(snapshot.savePath);
+    expectedEntries.add(snapshot.metaPath);
   }
-  const actualFiles = Object.entries(zip.files)
-    .filter(([, entry]) => !entry.dir)
-    .map(([name]) => name);
-  const unexpectedFiles = actualFiles.filter((name) => !expectedFiles.has(name));
-  const missingFiles = [...expectedFiles].filter((name) => !zip.file(name));
-  if (unexpectedFiles.length > 0 || missingFiles.length > 0 || actualFiles.length !== expectedFiles.size) {
-    throw new ImportRejectedError('Catalog archive contains unreferenced, duplicate, or missing files');
+  const actualEntries = Object.keys(zip.files);
+  const unexpectedEntries = actualEntries.filter((name) => !expectedEntries.has(name));
+  const missingEntries = [...expectedEntries].filter((name) => !Object.hasOwn(zip.files, name));
+  if (unexpectedEntries.length > 0 || missingEntries.length > 0 || actualEntries.length !== expectedEntries.size) {
+    throw new ImportRejectedError('Catalog archive contains unreferenced or missing entries');
   }
   const settingsBytes = await readZipEntry(zip, manifest.settingsPath, MAX_META_BYTES);
   let importedSettings: Pick<Settings, 'language' | 'scale'>;

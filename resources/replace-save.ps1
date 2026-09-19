@@ -24,6 +24,7 @@ public static class PepperedGuardedReplace
     private const uint LOCKFILE_FAIL_IMMEDIATELY = 0x00000001;
     private const uint LOCKFILE_EXCLUSIVE_LOCK = 0x00000002;
     private const uint REPLACEFILE_IGNORE_MERGE_ERRORS = 0x00000002;
+    private const uint MOVEFILE_REPLACE_EXISTING = 0x00000001;
     private const uint MOVEFILE_WRITE_THROUGH = 0x00000008;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -50,6 +51,14 @@ public static class PepperedGuardedReplace
     private static extern bool LockFileEx(
         SafeFileHandle fileHandle,
         uint flags,
+        uint reserved,
+        uint bytesLow,
+        uint bytesHigh,
+        ref OVERLAPPED overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UnlockFileEx(
+        SafeFileHandle fileHandle,
         uint reserved,
         uint bytesLow,
         uint bytesHigh,
@@ -111,6 +120,16 @@ public static class PepperedGuardedReplace
         return stream;
     }
 
+    private static void UnlockWholeFile(FileStream stream)
+    {
+        OVERLAPPED overlapped = new OVERLAPPED();
+        if (!UnlockFileEx(stream.SafeFileHandle, 0, UInt32.MaxValue, UInt32.MaxValue, ref overlapped))
+        {
+            int code = Marshal.GetLastWin32Error();
+            throw new Win32Exception(code, "FILE_UNLOCK_FAILED_WIN32_" + code);
+        }
+    }
+
     private static string Hash(FileStream stream)
     {
         stream.Position = 0;
@@ -151,6 +170,9 @@ public static class PepperedGuardedReplace
                 {
                     if (File.Exists(target))
                         throw new InvalidOperationException("TARGET_APPEARED");
+                    // Keep the no-write-shared handle open, but release the byte lock so
+                    // Windows can rename the source handle's file.
+                    UnlockWholeFile(replacement);
                     if (!MoveFileExW(temporary, target, MOVEFILE_WRITE_THROUGH))
                     {
                         int code = Marshal.GetLastWin32Error();
@@ -162,11 +184,54 @@ public static class PepperedGuardedReplace
                 using (FileStream current = OpenLockedRead(target))
                 {
                     RequireHash(current, expectedTargetSha256, "TARGET_CHANGED");
-                    if (!ReplaceFileW(target, temporary, null, REPLACEFILE_IGNORE_MERGE_ERRORS, IntPtr.Zero, IntPtr.Zero))
+                    // ReplaceFileW cannot reopen files while our read handles exist. Release
+                    // locks and handles only after both hashes pass, then ask Windows for one
+                    // replace-with-backup operation and verify both sides immediately.
+                    UnlockWholeFile(current);
+                    UnlockWholeFile(replacement);
+                    current.Dispose();
+                    replacement.Dispose();
+
+                    string backup = target + ".peppered-guard-" + Guid.NewGuid().ToString("N") + ".bak";
+                    if (!ReplaceFileW(target, temporary, backup, REPLACEFILE_IGNORE_MERGE_ERRORS, IntPtr.Zero, IntPtr.Zero))
                     {
                         int code = Marshal.GetLastWin32Error();
-                        throw new Win32Exception(code, "REPLACE_FAILED_WIN32_" + code);
+                        string evidence = File.Exists(backup) ? " BACKUP_PRESERVED_AT " + backup : String.Empty;
+                        throw new Win32Exception(code, "REPLACE_FAILED_WIN32_" + code + evidence);
                     }
+
+                    string committedHash;
+                    string backupHash;
+                    try
+                    {
+                        using (FileStream committed = OpenLockedRead(target))
+                            committedHash = Hash(committed);
+                        using (FileStream original = OpenLockedRead(backup))
+                            backupHash = Hash(original);
+                    }
+                    catch (Exception verificationError)
+                    {
+                        if (!ReplaceFileW(target, backup, temporary, REPLACEFILE_IGNORE_MERGE_ERRORS, IntPtr.Zero, IntPtr.Zero))
+                        {
+                            int code = Marshal.GetLastWin32Error();
+                            throw new InvalidOperationException("ROLLBACK_FAILED_WIN32_" + code + " BACKUP_PRESERVED_AT " + backup, verificationError);
+                        }
+                        throw new InvalidOperationException("TARGET_CHANGED_DURING_RESTORE", verificationError);
+                    }
+
+                    if (!String.Equals(committedHash, expectedReplacementSha256, StringComparison.Ordinal)
+                        || !String.Equals(backupHash, expectedTargetSha256, StringComparison.Ordinal))
+                    {
+                        if (!ReplaceFileW(target, backup, temporary, REPLACEFILE_IGNORE_MERGE_ERRORS, IntPtr.Zero, IntPtr.Zero))
+                        {
+                            int code = Marshal.GetLastWin32Error();
+                            throw new Win32Exception(code, "ROLLBACK_FAILED_WIN32_" + code + " BACKUP_PRESERVED_AT " + backup);
+                        }
+                        throw new InvalidOperationException("TARGET_CHANGED_DURING_RESTORE");
+                    }
+
+                    try { File.Delete(backup); } catch { /* A verified commit must not be reported as failed only because cleanup was denied. */ }
+                    return;
                 }
             }
         }
