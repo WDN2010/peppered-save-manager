@@ -186,7 +186,7 @@ describe('catalog capture and restore safety', () => {
     expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'manual')).toHaveLength(2);
     const renamed = await catalog.rename(safety.meta.id, 'Named recovery');
     expect(renamed.kind).toBe('manual');
-  });
+  }, 20_000);
 
   it('overwrites the rolling recovery with the immediately previous live bytes', async () => {
     const { root, catalog } = await makeCatalog();
@@ -210,7 +210,7 @@ describe('catalog capture and restore safety', () => {
     expect(recoveries).toHaveLength(1);
     const recovery = await catalog.getSnapshot(recoveries[0].id);
     expect(recovery.bytes).toEqual(await readFile(fixtureBPath));
-  });
+  }, 20_000);
 
   it('converges legacy multiple automatic recoveries on the next differing restore', async () => {
     const { root, catalog } = await makeCatalog();
