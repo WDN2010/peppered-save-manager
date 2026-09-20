@@ -1,6 +1,6 @@
 # Verification receipt
 
-Verified on `2026-09-20T19:01:13+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-20T19:01:13+03:00` from the version 1.0.6 release tree.
 
 ## Automated gates
 
@@ -17,11 +17,11 @@ Verified on `2026-09-20T19:01:13+03:00` from `/home/wdn2010/peppered-save-manage
 ## Artifact
 
 - Path: `release/PEPPERED-Save-Manager-1.0.6-portable.exe`
-- Size: `99,818,188` bytes
-- SHA-256: `40c4ce37a15f6e49f37a3651b397eeaf270e7c031faddc28ec43beaa0ff223dc`
+- Size: `99,818,603` bytes
+- SHA-256: `a2186a87d65fc8184d795535edf9eb1cf50b778258993314826736f74cff89bc`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
-- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size Merdeka portrait `build/icon.ico` are present in `app.asar`. The packaged icon matches the tracked source byte-for-byte at SHA-256 `26e88a967fdee1b6a7e4ac2d5dbe691009fee0ad6b60fbb6075a667a63301ad7`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
+- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size Merdeka portrait `build/icon.ico` are present in `app.asar`. The packaged icon matches the tracked source byte-for-byte at SHA-256 `26e88a967fdee1b6a7e4ac2d5dbe691009fee0ad6b60fbb6075a667a63301ad7`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`. Standalone packages also carry `LICENSE.peppered-save-manager.txt` (SHA-256 `88b1b62e17a20ea3713a0577641df9eb822c3664e6bd63f7db1d30cccedd40ea`) and `NOTICE.peppered-save-manager.md` (SHA-256 `29a68f42c6fdd1e2a13886ebc4f6fc93be79977fa40dc1ba598996873a700bff`) beside the application resources.
 
 ## Restore replacement primitive
 

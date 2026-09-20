@@ -40,8 +40,8 @@ def write_ico(frames: list[tuple[int, bytes]]) -> None:
 
 
 def main() -> None:
-    # The 1024px master uses Merdeka's in-game portrait from the locally owned
-    # PEPPERED assets. Tracked RGBA frames keep regeneration stdlib-only.
+    # The 1024px master uses Merdeka's in-game portrait from a locally
+    # available PEPPERED asset. Tracked RGBA frames keep regeneration stdlib-only.
     read_rgba_png(SOURCE, 1024)
     frames = [(size, read_rgba_png(FRAME_DIR / f'{size}.png', size)) for size in SIZES]
     write_ico(frames)

@@ -51,12 +51,22 @@
     "files": [
       "out/**/*",
       "build/icon.ico",
+      "LICENSE",
+      "NOTICE.md",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "resources/replace-save.ps1",
         "to": "helpers/replace-save.ps1"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.peppered-save-manager.txt"
+      },
+      {
+        "from": "NOTICE.md",
+        "to": "NOTICE.peppered-save-manager.md"
       }
     ],
     "directories": {

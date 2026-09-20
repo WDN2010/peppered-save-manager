@@ -96,7 +96,11 @@ describe('Electron and renderer release boundaries', () => {
     expect(packageJson.devDependencies.electron).toBe('44.4.1');
     expect(packageJson.build.win.icon).toBe('build/icon.ico');
     expect(packageJson.build.files).toContain('build/icon.ico');
+    expect(packageJson.build.files).toContain('LICENSE');
+    expect(packageJson.build.files).toContain('NOTICE.md');
     expect(packageJson.build.extraResources).toContainEqual({ from: 'resources/replace-save.ps1', to: 'helpers/replace-save.ps1' });
+    expect(packageJson.build.extraResources).toContainEqual({ from: 'LICENSE', to: 'LICENSE.peppered-save-manager.txt' });
+    expect(packageJson.build.extraResources).toContainEqual({ from: 'NOTICE.md', to: 'NOTICE.peppered-save-manager.md' });
     const icon = await readFile(path.join(root, 'build/icon.ico'));
     expect(icon.subarray(0, 6)).toEqual(Buffer.from([0, 0, 1, 0, 4, 0]));
     const iconSource = await readFile(path.join(root, 'build/icon-source.png'));

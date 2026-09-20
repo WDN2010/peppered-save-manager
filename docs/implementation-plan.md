@@ -1,5 +1,10 @@
 # PEPPERED Save Manager implementation plan
 
+> Historical implementation plan. The shipped release status and current
+> platform limitations are recorded in [`verification.md`](verification.md)
+> and [`../CHANGELOG.md`](../CHANGELOG.md). In particular, Wine startup was
+> inconclusive and is not treated as native Windows acceptance.
+
 ## Goal
 
 Deliver a Windows-only, bilingual RU/EN desktop GUI that manages PEPPERED's single Easy Save 3 `Save.es3` as a safe named snapshot catalog, renders short human-readable checkpoint descriptions, and imports/exports the full catalog.

@@ -1,15 +1,32 @@
 # PEPPERED Save Manager
 
+[![CI](https://github.com/WDN2010/peppered-save-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/WDN2010/peppered-save-manager/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/WDN2010/peppered-save-manager)](https://github.com/WDN2010/peppered-save-manager/releases/latest)
+[![License: MIT source code](https://img.shields.io/badge/source-MIT-blue.svg)](LICENSE)
+
+<img src="build/icon-source.png" alt="PEPPERED Save Manager icon with Merdeka" width="112">
+
 A focused, bilingual Windows desktop utility for capturing and restoring named PEPPERED practice checkpoints. The app treats the game's complete Easy Save 3 file as an opaque snapshot: it reads JSON metadata for display but never edits the game save.
+
+> [!IMPORTANT]
+> **Unofficial fan-made tool.** This project is not affiliated with, endorsed
+> by, or sponsored by Mostly Games, the PEPPERED rights holders, Valve, or
+> Steam. PEPPERED, Merdeka, and related artwork remain the property of their
+> respective rights holders. The Merdeka portrait is not covered by the MIT
+> License. See [NOTICE.md](NOTICE.md).
+
+**[Download the latest Windows x64 portable release](https://github.com/WDN2010/peppered-save-manager/releases/latest)**
 
 ## English
 
 ### Install and run
 
 - Use Windows 10/11 x64.
-- Install Node.js 22 or newer for development.
-- `npm ci`
-- `npm run dev`
+- Download `PEPPERED-Save-Manager-1.0.6-portable.exe` and its `.sha256` file from [GitHub Releases](https://github.com/WDN2010/peppered-save-manager/releases/tag/v1.0.6).
+- Verify the checksum, then run the portable executable. It does not require installation.
+- The community build is not code-signed, so Windows SmartScreen may ask for confirmation.
+
+For development, install Node.js 22 or newer, then run `npm ci` and `npm run dev`.
 
 The packaged application is portable and does not install a service, updater, telemetry, or network component.
 
@@ -69,8 +86,11 @@ Core modules live under `src/core` and take injected catalog roots, so they can 
 ### Установка и запуск
 
 - Используйте Windows 10/11 x64.
-- Для разработки установите Node.js 22 или новее.
-- Выполните `npm ci`, затем `npm run dev`.
+- Скачайте `PEPPERED-Save-Manager-1.0.6-portable.exe` и файл `.sha256` из [GitHub Releases](https://github.com/WDN2010/peppered-save-manager/releases/tag/v1.0.6).
+- Проверьте контрольную сумму и запустите portable-файл; установка не требуется.
+- Community-сборка не подписана сертификатом, поэтому Windows SmartScreen может запросить подтверждение.
+
+Для разработки установите Node.js 22 или новее, затем выполните `npm ci` и `npm run dev`.
 
 Готовая версия переносимая: приложение не устанавливает службы, обновлятор, телеметрию и сетевые компоненты.
 
@@ -124,3 +144,23 @@ npm run dist:win
 - Проверка процесса восстановления использует `tasklist.exe`; при ошибке проверка закрывает действие.
 - В первой версии восстанавливаются только полностью сохранённые точки. Произвольные сцены, прогресс, запуск не-Steam версии и зашифрованные варианты Easy Save не поддерживаются.
 - Для архивов действуют ограничения: 64 МиБ на архив, 16 МиБ на сохранение и 48 МиБ на все сохранения.
+
+## Project documentation / Документация
+
+- [Architecture / Архитектура](ARCHITECTURE.md)
+- [Contributing / Участие в разработке](CONTRIBUTING.md)
+- [Security policy / Политика безопасности](SECURITY.md)
+- [Changelog / История изменений](CHANGELOG.md)
+- [Verification receipt / Результаты проверок](docs/verification.md)
+
+## License and notices / Лицензия и уведомления
+
+Original source code and original project documentation are available under
+the [MIT License](LICENSE). PEPPERED names and game-derived artwork, including
+the Merdeka portrait icon, are excluded from that license. Details are in
+[NOTICE.md](NOTICE.md).
+
+Оригинальный исходный код и документация проекта распространяются по
+[лицензии MIT](LICENSE). Названия PEPPERED и производный от игры арт, включая
+иконку с Мердекой, в эту лицензию не входят. Подробности — в
+[NOTICE.md](NOTICE.md).
