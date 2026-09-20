@@ -346,11 +346,16 @@ describe('catalog capture and restore safety', () => {
     const failing = new CatalogRepository(root, {
       replaceAtomically: async (actualTarget, bytes, options) => {
         try {
-          await replaceAtomically(actualTarget, bytes, { ...options, retries: 0, rename: async () => {
-            const error = new Error('sharing violation') as NodeJS.ErrnoException;
-            error.code = 'EBUSY';
-            throw error;
-          } });
+          await replaceAtomically(actualTarget, bytes, {
+            ...options,
+            platform: 'win32',
+            retries: 0,
+            windowsGuardedReplace: async () => {
+              const error = new Error('sharing violation') as NodeJS.ErrnoException;
+              error.code = 'EBUSY';
+              throw error;
+            },
+          });
         } catch (error) {
           originalFailure = error as Error;
           throw error;
