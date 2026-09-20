@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rename, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { lstat as nativeLstat, mkdir, mkdtemp, readFile, rename, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { replaceAtomically } from '../src/core/atomic';
 import { CatalogRepository, retryTransientSaveRead } from '../src/core/catalog';
+import type { BigIntLstat } from '../src/core/path-safety';
 import type { Settings, SnapshotFile } from '../src/shared/types';
 
 const fixturePath = path.resolve('tests/fixtures/sample-save.es3');
@@ -507,6 +509,55 @@ describe('catalog capture and restore safety', () => {
     expect(await readFile(target)).toEqual(replacement);
   });
 
+  it('accepts Windows realpath aliases that identify the same parent directory', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-win-alias-'));
+    const target = path.join(root, 'Save.es3');
+    const replacement = Buffer.from('replacement through a benign alias');
+    const parent = path.dirname(target);
+    const aliasParent = path.join(root, 'BENIGN~1');
+    await writeFile(target, Buffer.from('original'));
+    const injectedLstat: BigIntLstat = async (value, options) => value === aliasParent
+      ? nativeLstat(parent, options)
+      : nativeLstat(value, options);
+
+    await replaceAtomically(target, replacement, {
+      platform: 'win32',
+      lstat: injectedLstat,
+      realpath: (async (value: string) => value === parent ? aliasParent : value) as typeof import('node:fs/promises').realpath,
+    });
+
+    expect(await readFile(target)).toEqual(replacement);
+  });
+
+  it('rejects colliding numeric aliases when exact BigInt identities differ', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-win-bigint-'));
+    const target = path.join(root, 'Save.es3');
+    const parent = path.dirname(target);
+    const aliasParent = path.join(root, 'BENIGN~1');
+    await writeFile(target, Buffer.from('original'));
+
+    const first = (2n ** 54n) + 1n;
+    const second = (2n ** 54n) + 2n;
+    expect(first).not.toBe(second);
+    expect(Number(first)).toBe(Number(second));
+    const identity = (info: BigIntStats, dev: bigint, ino: bigint): BigIntStats => {
+      info.dev = dev;
+      info.ino = ino;
+      return info;
+    };
+    const injectedLstat: BigIntLstat = async (value, options) => {
+      if (options.bigint !== true) throw new Error('exact lstat required');
+      const info = await nativeLstat(value === aliasParent ? parent : value, options);
+      return value === aliasParent ? identity(info, second, second) : identity(info, first, first);
+    };
+
+    await expect(replaceAtomically(target, Buffer.from('replacement'), {
+      platform: 'win32',
+      lstat: injectedLstat,
+      realpath: (async (value: string) => value === parent ? aliasParent : value) as typeof import('node:fs/promises').realpath,
+    })).rejects.toThrow(/symlink/i);
+  });
+
   it('reports guarded backup evidence when a Windows rollback failure consumes the temporary', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-win-rollback-'));
     const target = path.join(root, 'Save.es3');
@@ -542,11 +593,17 @@ describe('catalog capture and restore safety', () => {
     const { root, catalog } = await makeCatalog();
     const realDirectory = path.join(root, 'real');
     const linkDirectory = path.join(root, 'link');
-    await import('node:fs/promises').then(({ mkdir }) => mkdir(realDirectory));
+    await mkdir(realDirectory);
+    const nestedRealDirectory = path.join(realDirectory, 'nested');
+    await mkdir(nestedRealDirectory);
     const realTarget = path.join(realDirectory, 'Save.es3');
+    const nestedRealTarget = path.join(nestedRealDirectory, 'Save.es3');
     await writeFile(realTarget, await readFile(fixtureBPath));
+    await writeFile(nestedRealTarget, await readFile(fixtureBPath));
     await symlink(realDirectory, linkDirectory, 'junction');
     await expect(catalog.restore('11111111-1111-4111-8111-111111111111', path.join(linkDirectory, 'Save.es3'))).rejects.toThrow(/symlink|real directory/i);
+    await expect(catalog.capture({ sourcePath: path.join(linkDirectory, 'nested', 'Save.es3'), title: 'Nested symlink source' })).rejects.toThrow(/symlink|real directory/i);
+    await expect(replaceAtomically(path.join(linkDirectory, 'nested', 'Save.es3'), Buffer.from('replacement'))).rejects.toThrow(/symlink|real directory/i);
 
     const target = path.join(root, 'Save.es3');
     await symlink(realTarget, target);

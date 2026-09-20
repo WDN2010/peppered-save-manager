@@ -1,9 +1,10 @@
+import type { BigIntStats } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { access, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { sameFilesystemPath } from './validation';
+import { assertSafeDirectoryPath, assertSafeExistingPath, type BigIntLstat } from './path-safety';
 
 export interface AtomicFileOptions {
   rename?: typeof rename;
@@ -128,7 +129,7 @@ export async function atomicWriteFile(destination: string, bytes: Buffer, option
 }
 
 export interface AtomicReplaceOptions extends AtomicFileOptions {
-  lstat?: typeof import('node:fs/promises').lstat;
+  lstat?: BigIntLstat;
   realpath?: typeof import('node:fs/promises').realpath;
   retries?: number;
   guardedTargetSha256?: string | null;
@@ -137,29 +138,40 @@ export interface AtomicReplaceOptions extends AtomicFileOptions {
   windowsGuardedReplace?: WindowsGuardedReplace;
 }
 
+type FilesystemIdentity = Pick<BigIntStats, 'dev' | 'ino'>;
+
+function exactIdentity(info: FilesystemIdentity, message: string): FilesystemIdentity {
+  if (typeof info.dev !== 'bigint' || typeof info.ino !== 'bigint') throw new Error(message);
+  return { dev: info.dev, ino: info.ino };
+}
+
 async function assertStableReplacementPath(targetPath: string, options: AtomicReplaceOptions): Promise<{
   parent: string;
-  parentIdentity: { dev?: number; ino?: number };
-  targetIdentity: { dev?: number; ino?: number } | null;
+  parentIdentity: FilesystemIdentity;
+  targetIdentity: FilesystemIdentity | null;
 }> {
-  const { lstat, realpath } = await import('node:fs/promises');
-  const statPath = options.lstat ?? lstat;
-  const resolvePath = options.realpath ?? realpath;
   const absoluteTarget = path.resolve(targetPath);
   const parent = path.dirname(absoluteTarget);
-  const parentInfo = await statPath(parent);
-  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('The save folder must not be a symlink');
-  const resolvedParent = await resolvePath(parent);
-  if (!sameFilesystemPath(resolvedParent, parent)) throw new Error('The save folder must not resolve through a symlink');
-  let targetIdentity: { dev?: number; ino?: number } | null = null;
+  const parentInfo = await assertSafeDirectoryPath(parent, {
+    lstat: options.lstat,
+    realpath: options.realpath,
+  }, { symlink: 'The save folder must not be a symlink' });
+  let targetIdentity: FilesystemIdentity | null = null;
   try {
-    const targetInfo = await statPath(absoluteTarget);
-    if (targetInfo.isSymbolicLink() || !targetInfo.isFile()) throw new Error('The active save path must be a regular file');
-    targetIdentity = { dev: targetInfo.dev, ino: targetInfo.ino };
+    const targetInfo = await assertSafeExistingPath(absoluteTarget, {
+      lstat: options.lstat,
+      realpath: options.realpath,
+    }, 'The active save path must be a regular file, not a symlink');
+    if (!targetInfo.isFile()) throw new Error('The active save path must be a regular file');
+    targetIdentity = exactIdentity(targetInfo, 'The active save identity is unavailable');
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') throw error;
   }
-  return { parent, parentIdentity: { dev: parentInfo.dev, ino: parentInfo.ino }, targetIdentity };
+  return {
+    parent,
+    parentIdentity: exactIdentity(parentInfo, 'The save folder identity is unavailable'),
+    targetIdentity,
+  };
 }
 
 async function assertReplacementIdentity(targetPath: string, expected: Awaited<ReturnType<typeof assertStableReplacementPath>>, options: AtomicReplaceOptions): Promise<void> {

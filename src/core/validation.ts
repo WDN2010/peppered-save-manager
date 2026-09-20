@@ -26,10 +26,19 @@ export function isIsoDate(value: unknown): value is string {
 
 export function isValidSaveTarget(targetPath: unknown): targetPath is string {
   if (typeof targetPath !== 'string' || targetPath.length < 2 || targetPath.length > 4_000) return false;
+  if (isWindowsDeviceNamespace(targetPath)) return false;
   const absolute = path.isAbsolute(targetPath) || /^[A-Za-z]:[\\/]/.test(targetPath) || targetPath.startsWith('\\\\');
-  return absolute && path.basename(targetPath).toLowerCase() === 'save.es3';
+  return absolute && path.win32.basename(targetPath).toLowerCase() === 'save.es3';
 }
 
+function isWindowsDeviceNamespace(value: string): boolean {
+  return /^[\\/]{2}[?.](?:[\\/]|$)/.test(value);
+}
+
+/**
+ * Compares normalized spellings only. Security-sensitive callers must use
+ * filesystem identities instead because Windows aliases can spell one object differently.
+ */
 export function sameFilesystemPath(left: string, right: string): boolean {
   const normalizedLeft = path.normalize(left);
   const normalizedRight = path.normalize(right);
@@ -38,5 +47,6 @@ export function sameFilesystemPath(left: string, right: string): boolean {
 
 export function isValidSourcePath(sourcePath: unknown): sourcePath is string {
   if (typeof sourcePath !== 'string' || sourcePath.length < 1 || sourcePath.length > 4_000) return false;
+  if (isWindowsDeviceNamespace(sourcePath)) return false;
   return path.isAbsolute(sourcePath) || /^[A-Za-z]:[\\/]/.test(sourcePath) || sourcePath.startsWith('\\\\');
 }

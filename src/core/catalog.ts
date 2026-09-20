@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { access, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile, replaceAtomically } from './atomic';
+import { assertSafeDirectoryPath, assertSafeExistingPath } from './path-safety';
 import { parseSaveBytes, MAX_SAVE_BYTES } from './es3';
 import { validateSettings, validateSnapshotMeta, DEFAULT_SETTINGS } from './metadata';
 import { exportCatalog, importCatalog } from './archive';
-import { isIsoDate, isValidSaveTarget, isValidSnapshotId, isValidSourcePath, sameFilesystemPath } from './validation';
+import { isIsoDate, isValidSaveTarget, isValidSnapshotId, isValidSourcePath } from './validation';
 import type {
   CaptureInput,
   CaptureResult,
@@ -113,9 +114,8 @@ export async function retryTransientSaveRead<T>(
 async function readStableCaptureAttempt(sourcePath: string): Promise<Buffer> {
   const absoluteSource = path.resolve(sourcePath);
   const parent = path.dirname(absoluteSource);
-  const parentInfo = await lstat(parent);
-  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('The save folder must be a real directory');
-  if (!sameFilesystemPath(await realpath(parent), parent)) throw new Error('The save folder must not resolve through a symlink');
+  await assertSafeDirectoryPath(parent);
+  await assertSafeExistingPath(absoluteSource, {}, 'The capture source must be a regular file, not a symlink');
   const before = await lstat(absoluteSource, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink()) throw new Error('The capture source must be a regular file, not a symlink');
   if (before.size > BigInt(MAX_SAVE_BYTES)) throw new Error('Save exceeds the safety limit');
@@ -435,13 +435,10 @@ export class CatalogRepository {
   private async validateTarget(targetPath: string): Promise<void> {
     if (!isValidSaveTarget(targetPath)) throw new Error('Choose a valid absolute path ending in Save.es3');
     const parent = path.dirname(path.resolve(targetPath));
-    const parentInfo = await lstat(parent).catch(() => null);
-    if (!parentInfo || !parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('The save folder must be a real directory');
-    const resolvedParent = await realpath(parent);
-    if (!sameFilesystemPath(resolvedParent, parent)) throw new Error('The save folder must not resolve through a symlink');
+    await assertSafeDirectoryPath(parent);
     try {
-      const existing = await lstat(targetPath);
-      if (existing.isSymbolicLink() || !existing.isFile()) throw new Error('The active save path must be a regular file');
+      const existing = await assertSafeExistingPath(path.resolve(targetPath), {}, 'The active save path must be a regular file, not a symlink');
+      if (!existing.isFile()) throw new Error('The active save path must be a regular file');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
