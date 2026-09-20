@@ -48,7 +48,18 @@ describe('Electron and renderer release boundaries', () => {
     const ipc = await read('src/shared/ipc.ts');
     expect(ipc).toContain("'busy' | 'permission'");
     expect(app).toContain('restoreFailedWithTemp');
+    expect(app).toContain('restoreRollbackFailedWithBackup');
+    expect(app).toContain('BACKUP_PRESERVED_AT');
+    expect(app).toContain('CANDIDATE_PRESERVED_AT');
+    expect(app).toContain('QUARANTINE_RESIDUE_AT');
+    expect(app).toContain('restorePartialStatus');
+    expect(app).toContain('await onError?.(friendly)');
+    expect(app).toMatch(/const handleRestoreError[\s\S]*setModalError\(friendly\);[\s\S]*await refresh\(\)/);
+    expect(app).toMatch(/const restore = [\s\S]*undefined, handleRestoreError\);/);
     expect(app).toContain("result.previousState === 'absent'");
+    const copy = await read('src/renderer/i18n.ts');
+    expect(copy).toContain('restoreRollbackFailedWithBackup');
+    expect(copy).toContain('restoreCandidateCleanupResidue');
   });
 
   it('uses a strict CSP, localized document language, scale-aware text, and semantic list buttons', async () => {
@@ -105,6 +116,12 @@ describe('Electron and renderer release boundaries', () => {
     expect(helper).toContain('TARGET_CHANGED_DURING_RESTORE');
     expect(helper).toContain('ROLLBACK_FAILED_WIN32_');
     expect(helper).toContain('TARGET_CHANGED');
+    expect(helper).toContain('committedHash');
+    expect(helper).toContain('backupHash');
+    expect(helper).toContain('ReplaceFileW(target, backup, temporary');
+    expect(helper).toContain('BACKUP_PRESERVED_AT');
+    expect(helper).toMatch(/committedHash.*expectedReplacementSha256/s);
+    expect(helper).toMatch(/backupHash.*expectedTargetSha256/s);
     expect(helper).not.toContain('GetDirectoryName(target).TrimEnd');
   });
 });

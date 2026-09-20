@@ -17,10 +17,17 @@ type ModalState =
 
 type StatusState = { key: CopyKey; vars?: Record<string, string | number> };
 
-function friendlyErrorStatus(error: unknown): StatusState {
+export function friendlyErrorStatus(error: unknown): StatusState {
   const message = error instanceof Error ? error.message : '';
-  const temporaryPath = message.match(/Temporary recovery file preserved at (.+)$/i)?.[1]?.trim();
+  const backupPath = message.match(/BACKUP_PRESERVED_AT[ \t]+([^\r\n;]+?)(?=[;\r\n]|$)/i)?.[1]?.trim();
+  if (backupPath && /ROLLBACK_FAILED_WIN32_/i.test(message)) return { key: 'restoreRollbackFailedWithBackup', vars: { path: backupPath } };
+  const candidatePath = message.match(/CANDIDATE_PRESERVED_AT[ \t]+([^\r\n;]+?)(?=[;\r\n]|$)/i)?.[1]?.trim();
+  if (candidatePath) return { key: 'restoreCandidatePreserved', vars: { path: candidatePath } };
+  const quarantinePath = message.match(/QUARANTINE_RESIDUE_AT[ \t]+([^\r\n;]+?)(?=[;\r\n]|$)/i)?.[1]?.trim();
+  if (quarantinePath) return { key: 'restoreCandidateCleanupResidue', vars: { path: quarantinePath } };
+  const temporaryPath = message.match(/Temporary recovery file preserved at ([^\r\n]+)$/i)?.[1]?.trim();
   if (temporaryPath) return { key: /changed while restore/i.test(message) ? 'restoreChangedWithTemp' : 'restoreFailedWithTemp', vars: { path: temporaryPath } };
+  if (/Restore partially succeeded|automatic recovery cleanup failed/i.test(message)) return { key: 'restorePartialStatus' };
   if (/Close PEPPERED|закройте PEPPERED|Could not verify|changed while restore|guarded replacement failed/i.test(message)) return { key: 'closeGame' };
   if (/EACCES|EPERM|permission denied|operation not permitted|access is denied/i.test(message) && !/resource[\s_-]+busy|sharing[\s_-]+violation/i.test(message)) return { key: 'savePermissionDenied' };
   if (/capture source changed|changed while it was being read/i.test(message)) return { key: 'saveChangedDuringCapture' };
@@ -82,7 +89,7 @@ export default function App() {
   }, [state, search, sort, language]);
   const selected = state?.snapshots.find((snapshot) => snapshot.id === selectedId) ?? null;
 
-  const runMutation = async (operation: () => Promise<void>, success?: StatusState, onError?: (error: StatusState) => void) => {
+  const runMutation = async (operation: () => Promise<void>, success?: StatusState, onError?: (error: StatusState) => void | Promise<void>) => {
     const token = ++operationRef.current;
     setBusy(true);
     setStatus({ key: 'working' });
@@ -93,7 +100,7 @@ export default function App() {
       if (token === operationRef.current) {
         const friendly = friendlyErrorStatus(error);
         setStatus(friendly);
-        onError?.(friendly);
+        await onError?.(friendly);
       }
     } finally {
       if (token === operationRef.current) setBusy(false);
@@ -132,6 +139,11 @@ export default function App() {
     closeModal();
   }, { key: 'deletedStatus' }, setModalError);
 
+  const handleRestoreError = async (friendly: StatusState) => {
+    setModalError(friendly);
+    await refresh();
+  };
+
   const restore = () => void runMutation(async () => {
     if (!modal || modal.kind !== 'restore') return;
     if (modal.launch) {
@@ -145,7 +157,7 @@ export default function App() {
       closeModal();
       setStatus({ key: result.safetySnapshotId ? 'restoredStatus' : result.previousState === 'absent' ? 'restoredCreatedStatus' : 'restoredNoBackupStatus' });
     }
-  }, undefined, setModalError);
+  }, undefined, handleRestoreError);
 
   const exportCatalog = () => void runMutation(async () => {
     await window.peppered.exportCatalog();

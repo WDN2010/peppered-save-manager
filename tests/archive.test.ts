@@ -61,6 +61,52 @@ describe('catalog export and import', () => {
     expect(again).toMatchObject({ ok: true, added: 0, skipped: 1, rejected: 0 });
   });
 
+  it('round trips identical manual and recovery bytes as distinct kinds', async () => {
+    const source = await makeCatalog('same-bytes-source');
+    const destination = await makeCatalog('same-bytes-destination');
+    const captured = await source.catalog.capture({ sourcePath: fixturePath, title: 'Manual copy' });
+    expect(captured.kind).toBe('created');
+    if (captured.kind !== 'created') return;
+    const manual = await source.catalog.getSnapshot(captured.snapshot.id);
+    await source.catalog.addImportedSnapshot({
+      bytes: manual.bytes,
+      meta: { ...manual.meta, id: '11111111-1111-4111-8111-111111111111', kind: 'recovery', title: 'Recovery copy' },
+    });
+
+    const archivePath = path.join(source.root, 'same-bytes.peppered-saves');
+    await source.catalog.exportCatalog(archivePath);
+    const report = await destination.catalog.importCatalog(archivePath);
+    expect(report).toMatchObject({ ok: true, added: 2, skipped: 0, rejected: 0 });
+    expect((await destination.catalog.listSnapshots()).map((snapshot) => snapshot.kind).sort()).toEqual(['manual', 'recovery']);
+
+    const again = await destination.catalog.importCatalog(archivePath);
+    expect(again).toMatchObject({ ok: true, added: 0, skipped: 2, rejected: 0 });
+  });
+
+  it('rejects duplicate IDs with conflicting metadata instead of silently merging them', async () => {
+    const source = await makeCatalog('identity-source');
+    const destination = await makeCatalog('identity-destination');
+    const captured = await source.catalog.capture({ sourcePath: fixturePath, title: 'Original identity' });
+    expect(captured.kind).toBe('created');
+    if (captured.kind !== 'created') return;
+    const archivePath = path.join(source.root, 'identity.peppered-saves');
+    await source.catalog.exportCatalog(archivePath);
+    expect(await destination.catalog.importCatalog(archivePath)).toMatchObject({ ok: true, added: 1 });
+
+    const zip = await JSZip.loadAsync(await readFile(archivePath));
+    const metaPath = `snapshots/${captured.snapshot.id}/meta.json`;
+    const meta = JSON.parse(await zip.file(metaPath)!.async('string')) as Record<string, unknown>;
+    meta.kind = 'recovery';
+    meta.title = 'Conflicting identity';
+    zip.file(metaPath, JSON.stringify(meta));
+    const conflictingArchivePath = path.join(source.root, 'identity-conflict.peppered-saves');
+    await writeFile(conflictingArchivePath, await zip.generateAsync({ type: 'nodebuffer' }));
+
+    const report = await destination.catalog.importCatalog(conflictingArchivePath);
+    expect(report).toMatchObject({ ok: false, added: 0, rejected: 1 });
+    expect((await destination.catalog.listSnapshots())[0].title).toBe('Original identity');
+  });
+
   it('rejects path traversal and leaves the existing catalog untouched', async () => {
     const destination = await makeCatalog('malicious');
     const before = await destination.catalog.capture({ sourcePath: fixtureBPath, title: 'Existing' });

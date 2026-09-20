@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rename, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -129,6 +129,18 @@ describe('catalog capture and restore safety', () => {
     expect((await catalog.listSnapshots())).toHaveLength(1);
   });
 
+  it('orders equal capture times by snapshot id deterministically', async () => {
+    const { catalog } = await makeCatalog();
+    const capturedAt = '2026-01-02T03:04:05.000Z';
+    const first = await catalog.capture({ sourcePath: fixturePath, title: 'First', capturedAt });
+    const second = await catalog.capture({ sourcePath: fixtureBPath, title: 'Second', capturedAt });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+    const expected = [first.snapshot.id, second.snapshot.id].sort((left, right) => right.localeCompare(left));
+    expect((await catalog.listSnapshots()).map((snapshot) => snapshot.id)).toEqual(expected);
+  });
+
   it('serializes concurrent same-byte captures into one created result', async () => {
     const { root, catalog } = await makeCatalog();
     const source = path.join(root, 'Save.es3');
@@ -152,7 +164,7 @@ describe('catalog capture and restore safety', () => {
     await expect(catalog.delete('../outside')).rejects.toThrow('snapshot id');
   });
 
-  it('creates a distinct recovery snapshot even when ordinary bytes already exist', async () => {
+  it('creates one rolling recovery snapshot and preserves ordinary manual snapshots', async () => {
     const { root, catalog } = await makeCatalog();
     const target = path.join(root, 'Save.es3');
     await writeFile(target, await readFile(fixturePath));
@@ -164,11 +176,91 @@ describe('catalog capture and restore safety', () => {
     const result = await catalog.restore(selected.snapshot.id, target);
     expect(result.safetySnapshotId).toBeTruthy();
     expect(result.safetySnapshotId).not.toBe(ordinary.kind === 'created' ? ordinary.snapshot.id : null);
+    expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
     const safety = await catalog.getSnapshot(result.safetySnapshotId!);
     expect(safety.meta.kind).toBe('recovery');
     expect(safety.meta.title).toBe('Recovery copy');
+    expect(safety.bytes).toEqual(await readFile(fixturePath));
+    expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'manual')).toHaveLength(2);
     const renamed = await catalog.rename(safety.meta.id, 'Named recovery');
     expect(renamed.kind).toBe('manual');
+  });
+
+  it('overwrites the rolling recovery with the immediately previous live bytes', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const first = await catalog.capture({ sourcePath: fixturePath, title: 'First' });
+    const second = await catalog.capture({ sourcePath: fixtureBPath, title: 'Second' });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+
+    const firstRestore = await catalog.restore(second.snapshot.id, target);
+    const firstRecoveryId = firstRestore.safetySnapshotId;
+    expect(firstRecoveryId).toBeTruthy();
+    expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
+
+    const secondRestore = await catalog.restore(first.snapshot.id, target);
+    expect(secondRestore.safetySnapshotId).toBeTruthy();
+    expect(secondRestore.safetySnapshotId).not.toBe(firstRecoveryId);
+    const recoveries = (await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery');
+    expect(recoveries).toHaveLength(1);
+    const recovery = await catalog.getSnapshot(recoveries[0].id);
+    expect(recovery.bytes).toEqual(await readFile(fixtureBPath));
+  });
+
+  it('converges legacy multiple automatic recoveries on the next differing restore', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const selected = await catalog.capture({ sourcePath: fixtureBPath, title: 'Selected' });
+    const legacyOne = await catalog.capture({ sourcePath: fixturePath, title: 'Legacy source' });
+    expect(selected.kind).toBe('created');
+    expect(legacyOne.kind).toBe('created');
+    if (selected.kind !== 'created' || legacyOne.kind !== 'created') return;
+    const legacyFile = await catalog.getSnapshot(legacyOne.snapshot.id);
+    await catalog.addImportedSnapshot({
+      bytes: legacyFile.bytes,
+      meta: { ...legacyFile.meta, id: randomUUID(), kind: 'recovery', title: 'Recovery copy', capturedAt: '2026-01-01T00:00:00.000Z' },
+    });
+    await catalog.addImportedSnapshot({
+      bytes: legacyFile.bytes,
+      meta: { ...legacyFile.meta, id: randomUUID(), kind: 'recovery', title: 'Recovery copy', capturedAt: '2026-01-02T00:00:00.000Z' },
+    });
+    const before = (await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery');
+    expect(before).toHaveLength(2);
+
+    const result = await catalog.restore(selected.snapshot.id, target);
+    expect(result.safetySnapshotId).toBeTruthy();
+    expect(result.safetySnapshotId).not.toBe(before[0].id);
+    const recoveries = (await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery');
+    expect(recoveries).toHaveLength(1);
+    expect((await catalog.getSnapshot(recoveries[0].id)).bytes).toEqual(await readFile(fixturePath));
+    expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'manual')).toHaveLength(2);
+  });
+
+  it('keeps a renamed recovery manual and creates a new rolling recovery', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const selected = await catalog.capture({ sourcePath: fixtureBPath, title: 'Selected' });
+    expect(selected.kind).toBe('created');
+    if (selected.kind !== 'created') return;
+    const first = await catalog.restore(selected.snapshot.id, target);
+    expect(first.safetySnapshotId).toBeTruthy();
+    const renamed = await catalog.rename(first.safetySnapshotId!, 'Keep this recovery');
+    expect(renamed.kind).toBe('manual');
+
+    await catalog.restore(selected.snapshot.id, target);
+    const recoveries = (await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery');
+    expect(recoveries).toHaveLength(0);
+
+    const result = await catalog.restore(renamed.id, target);
+    expect(result.safetySnapshotId).toBeTruthy();
+    const snapshots = await catalog.listSnapshots();
+    expect(snapshots.filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
+    expect(snapshots.filter((snapshot) => snapshot.kind === 'manual' && snapshot.id === renamed.id)).toHaveLength(1);
   });
 
   it('restores with an atomic replacement and does not create a recovery when bytes match', async () => {
@@ -189,6 +281,160 @@ describe('catalog capture and restore safety', () => {
     const noNewRecovery = await catalog.restore(captured.snapshot.id, target);
     expect(noNewRecovery.safetySnapshotId).toBeNull();
     expect(noNewRecovery.previousState).toBe('identical');
+  });
+
+  it('does not update recovery state for an identical or absent target', async () => {
+    const { root, catalog } = await makeCatalog();
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const selected = await catalog.capture({ sourcePath: fixtureBPath, title: 'Selected' });
+    expect(selected.kind).toBe('created');
+    if (selected.kind !== 'created') return;
+    const first = await catalog.restore(selected.snapshot.id, target);
+    expect(first.safetySnapshotId).toBeTruthy();
+    const recoveryBefore = await catalog.getSnapshot(first.safetySnapshotId!);
+    const identical = await catalog.restore(selected.snapshot.id, target);
+    expect(identical).toMatchObject({ safetySnapshotId: null, previousState: 'identical' });
+    expect(await catalog.getSnapshot(first.safetySnapshotId!)).toEqual(recoveryBefore);
+
+    const absentTarget = path.join(root, 'absent', 'Save.es3');
+    await mkdir(path.dirname(absentTarget), { recursive: true });
+    const absent = await catalog.restore(selected.snapshot.id, absentTarget);
+    expect(absent).toMatchObject({ safetySnapshotId: null, previousState: 'absent' });
+    expect((await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
+  });
+
+  it('rolls back a staged rolling recovery when active replacement fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-rolling-failure-'));
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const catalog = new CatalogRepository(root);
+    const first = await catalog.capture({ sourcePath: fixturePath, title: 'First' });
+    const second = await catalog.capture({ sourcePath: fixtureBPath, title: 'Second' });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+    await catalog.restore(second.snapshot.id, target);
+    const previousRecovery = (await catalog.listSnapshots()).find((snapshot) => snapshot.kind === 'recovery');
+    expect(previousRecovery).toBeTruthy();
+    const failing = new CatalogRepository(root, { replaceAtomically: async () => { throw new Error('injected replacement failure'); } });
+    await expect(failing.restore(first.snapshot.id, target)).rejects.toThrow('injected replacement failure');
+    const recoveries = (await catalog.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery');
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0].id).toBe(previousRecovery!.id);
+    expect(await catalog.getSnapshot(previousRecovery!.id)).toMatchObject({ bytes: await readFile(fixturePath) });
+    expect(await readFile(target)).toEqual(await readFile(fixtureBPath));
+  });
+
+  it('preserves the original replacement evidence when candidate cleanup also fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-rolling-cleanup-failure-'));
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const seed = new CatalogRepository(root);
+    const first = await seed.capture({ sourcePath: fixturePath, title: 'First' });
+    const second = await seed.capture({ sourcePath: fixtureBPath, title: 'Second' });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+    await seed.restore(second.snapshot.id, target);
+    const previousRecovery = (await seed.listSnapshots()).find((snapshot) => snapshot.kind === 'recovery');
+    expect(previousRecovery).toBeTruthy();
+
+    let originalFailure: Error | undefined;
+    const failing = new CatalogRepository(root, {
+      replaceAtomically: async (actualTarget, bytes, options) => {
+        try {
+          await replaceAtomically(actualTarget, bytes, { ...options, retries: 0, rename: async () => {
+            const error = new Error('sharing violation') as NodeJS.ErrnoException;
+            error.code = 'EBUSY';
+            throw error;
+          } });
+        } catch (error) {
+          originalFailure = error as Error;
+          throw error;
+        }
+      },
+    });
+    const failingRepository = failing as unknown as { removeQuarantinedRecoveryCandidate: (quarantinePath: string) => Promise<void> };
+    failingRepository.removeQuarantinedRecoveryCandidate = async (quarantinePath) => {
+      await unlink(path.join(quarantinePath, 'save.es3'));
+      throw new Error('candidate quarantine deletion failed after partial delete');
+    };
+
+    let failure: Error | undefined;
+    try { await failing.restore(first.snapshot.id, target); }
+    catch (error) { failure = error as Error; }
+    expect(originalFailure).toBeTruthy();
+    expect(failure?.cause).toBe(originalFailure);
+    expect(failure?.message).toMatch(/QUARANTINE_RESIDUE_AT .+; candidate quarantine deletion failed after partial delete;/);
+    expect(failure?.message).toMatch(/Temporary recovery file preserved at .+$/);
+    const quarantinePath = failure?.message.match(/QUARANTINE_RESIDUE_AT ([^\r\n;]+)/)?.[1];
+    expect(quarantinePath).toBeTruthy();
+    await expect(stat(path.join(quarantinePath!, 'meta.json'))).resolves.toBeDefined();
+    await expect(stat(path.join(quarantinePath!, 'save.es3'))).rejects.toThrow();
+    expect((await failing.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
+    expect((await failing.listSnapshots()).find((snapshot) => snapshot.id === previousRecovery!.id)).toBeTruthy();
+    expect(await seed.getSnapshot(previousRecovery!.id)).toMatchObject({ bytes: await readFile(fixturePath) });
+    expect(await readFile(target)).toEqual(await readFile(fixtureBPath));
+  });
+
+  it('keeps a valid recovery candidate visible when quarantine rename fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-rolling-quarantine-rename-'));
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const seed = new CatalogRepository(root);
+    const first = await seed.capture({ sourcePath: fixturePath, title: 'First' });
+    const second = await seed.capture({ sourcePath: fixtureBPath, title: 'Second' });
+    expect(first.kind).toBe('created');
+    expect(second.kind).toBe('created');
+    if (first.kind !== 'created' || second.kind !== 'created') return;
+
+    const failing = new CatalogRepository(root, { replaceAtomically: async () => { throw new Error('injected replacement failure'); } });
+    const failingRepository = failing as unknown as { quarantineRecoveryCandidate: (id: string) => Promise<never> };
+    failingRepository.quarantineRecoveryCandidate = async () => { throw new Error('quarantine rename denied'); };
+
+    let failure: Error | undefined;
+    try { await failing.restore(second.snapshot.id, target); }
+    catch (error) { failure = error as Error; }
+    expect(failure?.cause).toBeInstanceOf(Error);
+    expect(failure?.message).toMatch(/remains valid and visible at .+CANDIDATE_PRESERVED_AT .+; quarantine rename denied;/);
+    const candidatePath = failure?.message.match(/CANDIDATE_PRESERVED_AT ([^\r\n;]+)/)?.[1];
+    expect(candidatePath).toBeTruthy();
+    await expect(stat(path.join(candidatePath!, 'save.es3'))).resolves.toBeDefined();
+    expect((await failing.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(1);
+    expect((await failing.listSnapshots()).find((snapshot) => snapshot.kind === 'recovery')?.id).toBe(path.basename(candidatePath!));
+    expect(await readFile(target)).toEqual(await readFile(fixturePath));
+  });
+
+  it('reports partial restore state when old recovery cleanup fails after replacement', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-rolling-post-cleanup-'));
+    const target = path.join(root, 'Save.es3');
+    await writeFile(target, await readFile(fixturePath));
+    const seed = new CatalogRepository(root);
+    const original = await seed.capture({ sourcePath: fixturePath, title: 'Original' });
+    const selected = await seed.capture({ sourcePath: fixtureBPath, title: 'Selected' });
+    expect(original.kind).toBe('created');
+    expect(selected.kind).toBe('created');
+    if (original.kind !== 'created' || selected.kind !== 'created') return;
+    const first = await seed.restore(selected.snapshot.id, target);
+    expect(first.safetySnapshotId).toBeTruthy();
+
+    const failing = new CatalogRepository(root);
+    const failingRepository = failing as unknown as { removeSnapshotDirectory: (id: string, force: boolean) => Promise<void> };
+    const originalRemove = failingRepository.removeSnapshotDirectory.bind(failing);
+    const cleanupFailure = new Error('old recovery cleanup denied');
+    failingRepository.removeSnapshotDirectory = async (id, force) => {
+      if (!force) throw cleanupFailure;
+      return originalRemove(id, force);
+    };
+
+    let failure: Error | undefined;
+    try { await failing.restore(original.snapshot.id, target); }
+    catch (error) { failure = error as Error; }
+    expect(failure?.message).toMatch(/partial|cleanup|automatic recovery/i);
+    expect(failure?.cause).toBe(cleanupFailure);
+    expect(await readFile(target)).toEqual(await readFile(fixturePath));
+    expect((await failing.listSnapshots()).filter((snapshot) => snapshot.kind === 'recovery')).toHaveLength(2);
   });
 
   it('distinguishes restoring into an absent target from an identical save', async () => {
@@ -259,6 +505,37 @@ describe('catalog capture and restore safety', () => {
     });
     expect(called).toBe(true);
     expect(await readFile(target)).toEqual(replacement);
+  });
+
+  it('reports guarded backup evidence when a Windows rollback failure consumes the temporary', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peppered-win-rollback-'));
+    const target = path.join(root, 'Save.es3');
+    const original = Buffer.from('original');
+    const replacement = Buffer.from('selected snapshot');
+    const backup = path.join(root, 'guarded backup with spaces.bak');
+    await writeFile(target, original);
+    let helperCalls = 0;
+    let failure: Error | undefined;
+    try {
+      await replaceAtomically(target, replacement, {
+        platform: 'win32',
+        guardedTargetSha256: sha256(original),
+        expectedReplacementSha256: sha256(replacement),
+        windowsGuardedReplace: async (_actualTarget, temporary) => {
+          helperCalls += 1;
+          await unlink(temporary);
+          const error = new Error(`ROLLBACK_FAILED_WIN32_32 BACKUP_PRESERVED_AT ${backup}`) as NodeJS.ErrnoException;
+          error.code = 'EBUSY';
+          throw error;
+        },
+      });
+    } catch (error) { failure = error as Error; }
+    expect(helperCalls).toBe(1);
+    expect(failure).toBeTruthy();
+    expect(failure?.message).toContain(`BACKUP_PRESERVED_AT ${backup}`);
+    expect(failure?.message).not.toContain('Temporary recovery file preserved at');
+    expect(failure?.cause).toBeInstanceOf(Error);
+    expect(await readFile(target)).toEqual(original);
   });
 
   it('rejects symlink targets and symlink parents before replacement', async () => {

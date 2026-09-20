@@ -59,6 +59,16 @@ function saveReadErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorWithCause(message: string, cause: unknown): Error {
+  const result = new Error(message, { cause });
+  if (cause instanceof Error) result.name = cause.name;
+  return result;
+}
+
 export function isSaveBusyError(error: unknown): boolean {
   const code = saveReadErrorCode(error);
   return code === 'EBUSY' || code === 'ETXTBSY' || /resource[\s_-]+busy|sharing[\s_-]+violation/i.test(saveReadErrorMessage(error));
@@ -138,13 +148,15 @@ export class CatalogRepository {
   readonly snapshotsPath: string;
   readonly settingsPath: string;
   private readonly initialLanguage: Language;
+  private readonly replaceTarget: typeof replaceAtomically;
   private readonly mutations = new MutationQueue();
 
-  constructor(rootPath: string, options: { defaultLanguage?: Language } = {}) {
+  constructor(rootPath: string, options: { defaultLanguage?: Language; replaceAtomically?: typeof replaceAtomically } = {}) {
     this.rootPath = path.resolve(rootPath);
     this.snapshotsPath = path.join(this.rootPath, 'snapshots');
     this.settingsPath = path.join(this.rootPath, 'settings.json');
     this.initialLanguage = options.defaultLanguage ?? 'en';
+    this.replaceTarget = options.replaceAtomically ?? replaceAtomically;
   }
 
   private async ensureDirectories(): Promise<void> {
@@ -227,7 +239,7 @@ export class CatalogRepository {
         // Corrupt or incomplete entries are quarantined from the renderer by omission.
       }
     }
-    return snapshots.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+    return snapshots.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt) || b.id.localeCompare(a.id));
   }
 
   async getSnapshot(id: string): Promise<SnapshotFile> {
@@ -326,6 +338,72 @@ export class CatalogRepository {
     return { kind: 'created', snapshot };
   }
 
+  private makeRecoverySnapshot(bytes: Buffer, sourcePath: string, capturedAt: string): SnapshotFile {
+    const parsed = parseSaveBytes(bytes);
+    const meta: SnapshotMeta = {
+      version: CATALOG_VERSION,
+      id: randomUUID(),
+      title: 'Recovery copy',
+      kind: 'recovery',
+      capturedAt,
+      sourcePath,
+      sha256: hashBytes(bytes),
+      bytes: bytes.length,
+      summary: parsed.summary,
+    };
+    return { meta: validateSnapshotMeta(meta, meta.id), bytes };
+  }
+
+  private async removeSnapshotDirectory(id: string, force: boolean): Promise<void> {
+    await rm(this.snapshotDirectory(id), { recursive: true, force });
+  }
+
+  private async quarantineRecoveryCandidate(id: string): Promise<{ candidatePath: string; quarantinePath: string }> {
+    const candidatePath = this.snapshotDirectory(id);
+    const quarantinePath = path.join(this.snapshotsPath, `.${id}.discard-${randomUUID()}`);
+    await rename(candidatePath, quarantinePath);
+    return { candidatePath, quarantinePath };
+  }
+
+  private async removeQuarantinedRecoveryCandidate(quarantinePath: string): Promise<void> {
+    await rm(quarantinePath, { recursive: true, force: true });
+  }
+
+  private async discardFailedRecoveryCandidate(id: string, replacementError: unknown): Promise<never> {
+    const candidatePath = this.snapshotDirectory(id);
+    let quarantinePath: string;
+    try {
+      const quarantined = await this.quarantineRecoveryCandidate(id);
+      quarantinePath = quarantined.quarantinePath;
+    } catch (quarantineError) {
+      throw errorWithCause(
+        `Recovery candidate cleanup could not quarantine the candidate; it remains valid and visible at ${candidatePath}. CANDIDATE_PRESERVED_AT ${candidatePath}; ${errorMessage(quarantineError)}; ${errorMessage(replacementError)}`,
+        replacementError,
+      );
+    }
+    try {
+      await this.removeQuarantinedRecoveryCandidate(quarantinePath);
+    } catch (cleanupError) {
+      throw errorWithCause(
+        `Recovery candidate cleanup left residue at ${quarantinePath}; QUARANTINE_RESIDUE_AT ${quarantinePath}; ${errorMessage(cleanupError)}; ${errorMessage(replacementError)}`,
+        replacementError,
+      );
+    }
+    throw replacementError;
+  }
+
+  private async prepareRecoverySnapshot(current: Buffer, targetPath: string, capturedAt: string): Promise<{
+    snapshot: SnapshotFile;
+    previousRecoveryIds: string[];
+  }> {
+    const previousRecoveryIds = (await this.listSnapshots())
+      .filter((snapshot) => snapshot.kind === 'recovery')
+      .map((snapshot) => snapshot.id);
+    const snapshot = this.makeRecoverySnapshot(current, targetPath, capturedAt);
+    await this.createSnapshot(snapshot);
+    return { snapshot, previousRecoveryIds };
+  }
+
   async capture(input: CaptureInput): Promise<CaptureResult> {
     if (!input || !isValidSourcePath(input.sourcePath)) throw new Error('Invalid save path');
     const capturedAt = input.capturedAt ?? new Date().toISOString();
@@ -380,10 +458,29 @@ export class CatalogRepository {
       let safetySnapshotId: string | null = null;
       const capturedAt = now.toISOString();
       if (current && !current.equals(selected.bytes)) {
-        const safety = await this.captureBytes(current, targetPath, 'Recovery copy', capturedAt, 'recovery');
-        safetySnapshotId = safety.snapshot.id;
+        const prepared = await this.prepareRecoverySnapshot(current, targetPath, capturedAt);
+        safetySnapshotId = prepared.snapshot.meta.id;
+        try {
+          await this.replaceTarget(targetPath, selected.bytes, {
+            guardedTargetSha256: hashBytes(current),
+            expectedReplacementSha256: selected.meta.sha256,
+          });
+        } catch (error) {
+          return this.discardFailedRecoveryCandidate(prepared.snapshot.meta.id, error);
+        }
+        try {
+          for (const recoveryId of prepared.previousRecoveryIds) {
+            await this.removeSnapshotDirectory(recoveryId, false);
+          }
+        } catch (cleanupError) {
+          throw errorWithCause(
+            `Restore partially succeeded: the active save was replaced, but automatic recovery cleanup failed. Recovery copy is available at ${this.snapshotDirectory(prepared.snapshot.meta.id)}. ${errorMessage(cleanupError)}`,
+            cleanupError,
+          );
+        }
+        return { restored: true, safetySnapshotId, previousState };
       }
-      await replaceAtomically(targetPath, selected.bytes, {
+      await this.replaceTarget(targetPath, selected.bytes, {
         guardedTargetSha256: current ? hashBytes(current) : null,
         expectedReplacementSha256: selected.meta.sha256,
       });

@@ -18,6 +18,8 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function isTransientReplaceError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/ROLLBACK_FAILED_WIN32_/i.test(message)) return false;
   return ['EPERM', 'EACCES', 'EBUSY'].includes(errorCode(error) ?? '');
 }
 
@@ -27,6 +29,13 @@ function wait(milliseconds: number): Promise<void> {
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function normalizeWindowsHelperDetail(detail: string): string {
+  const marker = detail.match(/(?:^|\s)BACKUP_PRESERVED_AT[ \t]+([^\r\n]+)/i);
+  if (!marker) return detail;
+  const normalized = `BACKUP_PRESERVED_AT ${marker[1].trim()}`;
+  return detail.replace(/BACKUP_PRESERVED_AT[ \t]+[^\r\n]+/i, normalized);
 }
 
 async function resolveWindowsReplaceHelper(): Promise<string> {
@@ -62,21 +71,26 @@ async function runWindowsGuardedReplace(
     ], { windowsHide: true, timeout: 20_000, maxBuffer: 256 * 1024 });
   } catch (error) {
     const detail = error instanceof Error && 'stderr' in error
-      ? String((error as Error & { stderr?: unknown }).stderr ?? error.message)
+      ? String((error as Error & { stderr?: unknown }).stderr ?? '').trim() || error.message
       : String(error);
-    const concurrent = /TARGET_CHANGED|TARGET_APPEARED/i.test(detail);
+    const normalizedDetail = normalizeWindowsHelperDetail(detail);
+    const concurrent = /TARGET_CHANGED|TARGET_APPEARED/i.test(normalizedDetail);
+    const rollbackFailed = /ROLLBACK_FAILED_WIN32_/i.test(normalizedDetail);
     const wrapped = new Error(concurrent
       ? 'The active save changed while restore was being prepared; no replacement was made.'
-      : `Windows guarded replacement failed: ${detail}`) as NodeJS.ErrnoException;
-    if (/WIN32_(32|33)|sharing|FILE_LOCK_FAILED/i.test(detail)) wrapped.code = 'EBUSY';
+      : `Windows guarded replacement failed: ${normalizedDetail}`) as NodeJS.ErrnoException;
+    wrapped.cause = error;
+    if (!rollbackFailed && /WIN32_(32|33)|sharing|FILE_LOCK_FAILED/i.test(normalizedDetail)) wrapped.code = 'EBUSY';
     else if (concurrent) wrapped.code = 'ECONCURRENT';
     throw wrapped;
   }
 }
 
-function withTempPath(error: unknown, temporary: string): Error {
+async function withTempPath(error: unknown, temporary: string): Promise<Error> {
   const message = error instanceof Error ? error.message : String(error);
-  const result = new Error(`${message} Temporary recovery file preserved at ${temporary}`);
+  const temporaryExists = await access(temporary).then(() => true, () => false);
+  const evidence = temporaryExists ? ` Temporary recovery file preserved at ${temporary}` : '';
+  const result = new Error(`${message}${evidence}`);
   result.name = error instanceof Error ? error.name : 'AtomicReplaceError';
   (result as Error & { cause?: unknown }).cause = error;
   return result;
@@ -104,7 +118,7 @@ export async function atomicWriteFile(destination: string, bytes: Buffer, option
     replaced = true;
   } catch (error) {
     await closeQuietly(handle);
-    if (replacementStarted && !replaced) throw withTempPath(error, temporary);
+    if (replacementStarted && !replaced) throw await withTempPath(error, temporary);
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }
@@ -210,7 +224,7 @@ export async function replaceAtomically(targetPath: string, bytes: Buffer, optio
     replaced = true;
   } catch (error) {
     await closeQuietly(handle);
-    if (replacementStarted && !replaced) throw withTempPath(error, temporary);
+    if (replacementStarted && !replaced) throw await withTempPath(error, temporary);
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }

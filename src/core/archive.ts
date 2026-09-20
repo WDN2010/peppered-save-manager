@@ -102,6 +102,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function snapshotHashKey(meta: Pick<SnapshotMeta, 'kind' | 'sha256'>): string {
+  return `${meta.kind}:${meta.sha256.toLowerCase()}`;
+}
+
+function sameSnapshotIdentity(left: SnapshotMeta, right: SnapshotMeta): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function decodeUtf8(bytes: Buffer, label: string): string {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { throw new ImportRejectedError(`${label} is not valid UTF-8`); }
@@ -224,10 +232,10 @@ export async function importCatalog(catalog: ArchiveCatalog, archivePath: string
   }
   const existing = await catalog.listSnapshots();
   const existingById = new Map(existing.map((snapshot) => [snapshot.id.toLowerCase(), snapshot]));
-  const existingByHash = new Set(existing.map((snapshot) => snapshot.sha256.toLowerCase()));
+  const existingByKindHash = new Set(existing.map((snapshot) => snapshotHashKey(snapshot)));
   const staged: SnapshotFile[] = [];
-  const stagedIds = new Set<string>();
-  const stagedHashes = new Set<string>();
+  const stagedById = new Map<string, SnapshotMeta>();
+  const stagedKindHashes = new Set<string>();
   const errors: string[] = [];
   let skipped = 0;
   let actualTotalSaveBytes = 0;
@@ -246,19 +254,20 @@ export async function importCatalog(catalog: ArchiveCatalog, archivePath: string
       const meta = validateSnapshotMeta(metaValue, entry.id);
       if (meta.sha256 !== actualHash || meta.bytes !== saveBytes.length) throw new ImportRejectedError(`Snapshot ${entry.id} failed metadata hash validation`);
       parseSaveBytes(saveBytes);
-      if (existingById.has(entry.id) || stagedIds.has(entry.id)) {
-        const known = existingById.get(entry.id) ?? staged.find((snapshot) => snapshot.meta.id === entry.id)?.meta;
-        if (known?.sha256.toLowerCase() === actualHash) skipped += 1;
-        else throw new ImportRejectedError(`Duplicate snapshot id ${entry.id}`);
+      if (existingById.has(entry.id) || stagedById.has(entry.id)) {
+        const known = existingById.get(entry.id) ?? stagedById.get(entry.id);
+        if (known && sameSnapshotIdentity(known, meta) && known.sha256.toLowerCase() === actualHash) skipped += 1;
+        else throw new ImportRejectedError(`Duplicate snapshot id ${entry.id} has conflicting metadata`);
         continue;
       }
-      if (existingByHash.has(actualHash) || stagedHashes.has(actualHash)) {
+      const kindHash = snapshotHashKey(meta);
+      if (existingByKindHash.has(kindHash) || stagedKindHashes.has(kindHash)) {
         skipped += 1;
         continue;
       }
       staged.push({ meta, bytes: saveBytes });
-      stagedIds.add(entry.id);
-      stagedHashes.add(actualHash);
+      stagedById.set(entry.id, meta);
+      stagedKindHashes.add(kindHash);
     } catch (error) {
       if (error instanceof ImportLimitError) throw error;
       errors.push(error instanceof Error ? error.message : `Snapshot ${entry.id} was rejected`);
