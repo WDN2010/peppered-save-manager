@@ -1,23 +1,23 @@
 # Verification receipt
 
-Verified on `2026-09-19T23:52:45+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-20T15:55:58+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
-- `npm test` — PASS: 5 test files, 41 tests.
+- `npm test` — PASS: 6 test files, 49 tests.
 - `npm run typecheck` — PASS.
 - `npm run lint` — PASS with zero warnings.
 - `npm run test:electron` — PASS: `ELECTRON_SMOKE_PASS bridge=object shell=true launch=true capture=true inlineError=true title=PEPPERED Save Manager lang=ru`.
   - The smoke test builds the production bundles, launches Electron 44.4.1 with an isolated home and user-data directory under Xvfb, connects over CDP, verifies the sandboxed CommonJS preload, captures a real fixture through the prefilled dialog, and proves a rejected capture remains visible inside the open dialog.
 - `npm audit` — PASS: 0 vulnerabilities.
-- `npm run dist:win` — PASS: Windows x64 portable target built with Electron 44.4.1 and electron-builder 26.15.3.
+- `npm run dist:win` — PASS: Windows x64 portable target built with Electron 44.4.1 and electron-builder 26.15.3 in a bubblewrap namespace with an ext4-backed `/tmp`.
 - `git diff --check` — PASS before commit.
 
 ## Artifact
 
-- Path: `release/PEPPERED-Save-Manager-1.0.3-portable.exe`
-- Size: `99,884,833` bytes
-- SHA-256: `41f7906cdd910890d6e48303565ad87fb032b46a3f2d36c038d1e82225a4d131`
+- Path: `release/PEPPERED-Save-Manager-1.0.4-portable.exe`
+- Size: `99,885,286` bytes
+- SHA-256: `4c2487c79f41aedbc18712aa26a8a2595a74292fee473a7139f43cf19f92ebfd`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
 - Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
@@ -35,6 +35,7 @@ Regression tests cover:
 - concurrent same-byte capture deduplication, symlink-source rejection, and stable-source reads;
 - bounded retry of positively identified transient Windows sharing-lock failures, preservation of ordinary EACCES/EPERM permission errors, source-change errors after retry exhaustion, and the persistent busy contract;
 - stable recovery reads, distinct automatic recovery snapshots, and explicit absent/identical/different prior-state results;
+- strict five-field `tasklist /FO CSV /NH` parsing, exact game-image matching, Save Manager self-match rejection, and fail-closed malformed/empty/process-error handling shared by Restore and Restore + launch;
 - prefilled human-readable capture titles, enabled first-click capture, and inline modal errors for failed actions;
 - changed-current-save detection, exact guarded Windows hash handoff, and failed replacement preserving the original save and temporary evidence;
 - symlink target and parent rejection;
@@ -44,6 +45,10 @@ Regression tests cover:
 - sandbox-compatible preload output, CSP/navigation/IPC boundaries, the fixed Steam launch bridge, localized preserved-temporary-file failures, semantic list buttons, scalable typography, custom icon packaging, and single-instance admission.
 
 The tracked native Windows lock regression is `npm run test:windows-save-lock`. It holds `Save.es3` with an exclusive native handle, starts the transient production `getState()` probe only after the lock is acquired, exercises bounded retry and persistent busy classification, verifies the busy-state capture path stays available, and asserts no snapshot plus localized inline busy copy. It was not run on this Linux host; the script is syntax/static-checkable here and remains an external native-Windows acceptance gate. The existing Linux Electron smoke is the verified preload/IPC/renderer smoke, and the guarded-replace helper remains a separate native Windows gate.
+
+## Packaging environment
+
+The bundled Linux `makensis` 3.0.4.1 crashes with `SIGBUS` when its large temporary mapping is placed on this host's tmpfs-backed `/tmp`. The accepted portable artifact was built with the unchanged `npm run dist:win` command inside a bubblewrap mount namespace whose `/tmp` was an ext4-backed private directory. The resulting PE wrapper, unpacked x64 executable, `app.asar` version/content, and packaged helper hash were inspected independently.
 
 ## Visual QA
 

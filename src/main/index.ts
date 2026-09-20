@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CatalogRepository, isValidSaveTarget, isValidSnapshotId } from '../core/catalog';
 import { inspectLiveSave } from '../core/live';
+import { verifyPepperedClosed } from '../core/windows-processes';
 import { ImportRejectedError } from '../core/archive';
 import type { AppState, CaptureResponse, RestoreAndLaunchResponse, RestoreResponse } from '../shared/ipc';
 import type { Language, Settings, UiScale } from '../shared/types';
@@ -70,14 +71,11 @@ export function isTrustedRendererUrl(value: string, devUrl: string | undefined, 
   return value === trustedFileUrl;
 }
 
-async function gameIsRunning(): Promise<boolean> {
-  if (process.platform !== 'win32') return false;
-  try {
+async function verifyGameClosed(): Promise<void> {
+  await verifyPepperedClosed(process.platform, async () => {
     const result = await execFileAsync('tasklist.exe', ['/FO', 'CSV', '/NH'], { timeout: 2_500, windowsHide: true, maxBuffer: 1_000_000 });
-    return /"(?:PEPPERED|PEPPERED-Win64-Shipping|PEPPERED\.exe)[^"]*"/i.test(result.stdout);
-  } catch {
-    throw new Error('Could not verify that PEPPERED is closed. Close the game and try again.');
-  }
+    return result.stdout;
+  });
 }
 
 export function registerIpc(catalog: CatalogRepository): void {
@@ -146,7 +144,7 @@ export function registerIpc(catalog: CatalogRepository): void {
     return getState();
   });
   const restoreCheckpoint = async (id: string): Promise<RestoreResponse> => {
-    if (await gameIsRunning()) throw new Error('Close PEPPERED before restoring a checkpoint.');
+    await verifyGameClosed();
     const settings = await getSettings();
     const result = await catalog.restore(id, resolveActivePath(settings));
     return { state: await getState(), safetySnapshotId: result.safetySnapshotId, previousState: result.previousState };

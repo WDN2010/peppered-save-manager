@@ -27,6 +27,10 @@ describe('Electron and renderer release boundaries', () => {
     expect(main).toContain('app.requestSingleInstanceLock()');
     expect(main).toContain("const PEPPERED_STEAM_URI = 'steam://rungameid/1883370'");
     expect(main).toContain("ipcMain.handle('app:restore-and-launch'");
+    expect(main).toContain("import { verifyPepperedClosed } from '../core/windows-processes'");
+    expect(main).toContain('await verifyGameClosed();');
+    expect(main).toContain('return restoreCheckpoint(input.id);');
+    expect(main).toContain('const restored = await restoreCheckpoint(input.id);');
     const preload = await read('src/preload/index.ts');
     expect(preload).toContain("ipcRenderer.invoke('app:restore-and-launch'");
     const catalog = await read('src/core/catalog.ts');
