@@ -13,6 +13,8 @@ All notable user-visible changes are recorded here.
   uncertainty is terminal and never retried.
 - Preserve identical manual and recovery bytes as distinct entries through
   catalog export/import.
+- Accept benign Windows path aliases only when exact BigInt filesystem
+  identities match; continue rejecting symlinks, junctions, and device namespaces.
 - Add regression coverage for rolling recovery, archive identity, quarantine
   failures, localized evidence paths, and renderer refresh behavior.
 
