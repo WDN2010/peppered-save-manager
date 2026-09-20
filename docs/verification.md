@@ -1,6 +1,6 @@
 # Verification receipt
 
-Verified on `2026-09-20T15:55:58+03:00` from `/home/wdn2010/peppered-save-manager`.
+Verified on `2026-09-20T16:33:47+03:00` from `/home/wdn2010/peppered-save-manager`.
 
 ## Automated gates
 
@@ -15,12 +15,12 @@ Verified on `2026-09-20T15:55:58+03:00` from `/home/wdn2010/peppered-save-manage
 
 ## Artifact
 
-- Path: `release/PEPPERED-Save-Manager-1.0.4-portable.exe`
-- Size: `99,885,286` bytes
-- SHA-256: `4c2487c79f41aedbc18712aa26a8a2595a74292fee473a7139f43cf19f92ebfd`
+- Path: `release/PEPPERED-Save-Manager-1.0.5-portable.exe`
+- Size: `99,817,192` bytes
+- SHA-256: `129f5437992df9c6cce34a7bc1f3705104ef13f1be24d877ff9ebeddd7495298`
 - Outer portable wrapper: PE32 NSIS self-extracting executable.
 - Bundled application: PE32+ Windows x86-64 executable.
-- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size `build/icon.ico` are present in `app.asar`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
+- Package inspection confirmed `out/preload/index.cjs`, renderer assets, and the custom four-size Merdeka portrait `build/icon.ico` are present in `app.asar`. The packaged icon matches the tracked source byte-for-byte at SHA-256 `26e88a967fdee1b6a7e4ac2d5dbe691009fee0ad6b60fbb6075a667a63301ad7`. The guarded Windows replacement helper is present at `resources/helpers/replace-save.ps1` with the same SHA-256 as its tracked source: `d89f41c45f045154a3207e39f65cb82b60774722cc92d3eb05439cd4837b0f3c`.
 
 ## Restore replacement primitive
 
@@ -60,6 +60,7 @@ Screenshots were inspected for:
 - populated checkpoint detail view with the name `A_7 — перед лифтом`;
 - capture dialog with the generated `A_7 — Elevator area` title and enabled confirmation;
 - capture rejection displayed as a readable inline alert without clipping actions.
+- Merdeka portrait icon at its actual embedded 16×16, 32×32, 48×48, and 256×256 frames, including transparent corners, crop, border consistency, and small-size recognition.
 
 The final layouts kept all controls reachable, switched to a vertically scrollable single-column layout at minimum width, preserved visible focus/selection hierarchy, and showed localized labels and human-readable checkpoint data. Primary button fill was darkened after contrast calculation so normal-size near-white text exceeds the 4.5:1 target.
 

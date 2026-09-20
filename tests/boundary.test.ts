@@ -88,6 +88,15 @@ describe('Electron and renderer release boundaries', () => {
     expect(packageJson.build.extraResources).toContainEqual({ from: 'resources/replace-save.ps1', to: 'helpers/replace-save.ps1' });
     const icon = await readFile(path.join(root, 'build/icon.ico'));
     expect(icon.subarray(0, 6)).toEqual(Buffer.from([0, 0, 1, 0, 4, 0]));
+    const iconSource = await readFile(path.join(root, 'build/icon-source.png'));
+    expect(iconSource.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(iconSource.readUInt32BE(16)).toBe(1024);
+    expect(iconSource.readUInt32BE(20)).toBe(1024);
+    const iconScript = await read('scripts/make-icon.py');
+    expect(iconScript).toContain("SOURCE = ROOT / 'build' / 'icon-source.png'");
+    expect(iconScript).toContain("FRAME_DIR = ROOT / 'build' / 'icon-frames'");
+    expect(iconScript).toContain('Merdeka portrait');
+    expect(iconScript).not.toContain('from PIL');
     const helper = await read('resources/replace-save.ps1');
     expect(helper).toContain('LockFileEx');
     expect(helper).toContain('UnlockFileEx');
