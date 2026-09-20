@@ -69,9 +69,11 @@ try {
   $busyReplacement = Join-Path $root 'busy.tmp'
   Write-Bytes $busy 'busy-current'
   Write-Bytes $busyReplacement 'busy-replacement'
+  $busySha256 = Get-Sha256 $busy
+  $busyReplacementSha256 = Get-Sha256 $busyReplacement
   $heldWriter = [IO.File]::Open($busy, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
   try {
-    Invoke-GuardedReplace $busy $busyReplacement (Get-Sha256 $busy) (Get-Sha256 $busyReplacement) $false
+    Invoke-GuardedReplace $busy $busyReplacement $busySha256 $busyReplacementSha256 $false
   } finally {
     $heldWriter.Dispose()
   }
