@@ -93,7 +93,7 @@ describe('Electron and renderer release boundaries', () => {
       devDependencies: Record<string, string>;
       build: { files: string[]; extraResources: Array<{ from: string; to: string }>; win: { icon: string } };
     };
-    expect(packageJson.devDependencies.electron).toBe('44.4.1');
+    expect(packageJson.devDependencies.electron).toBe('44.4.2');
     expect(packageJson.build.win.icon).toBe('build/icon.ico');
     expect(packageJson.build.files).toContain('build/icon.ico');
     expect(packageJson.build.files).toContain('LICENSE');
